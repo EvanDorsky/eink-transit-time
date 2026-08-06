@@ -1,0 +1,6 @@
+# Make the few strings we actually read static arrays instead of callbacks.
+# Everything else stays callback-typed and is skipped when no callback is set.
+transit_realtime.FeedHeader.gtfs_realtime_version max_size:16
+transit_realtime.FeedEntity.id                    max_size:64
+transit_realtime.TripDescriptor.route_id          max_size:16
+transit_realtime.TripUpdate.StopTimeUpdate.stop_id max_size:16

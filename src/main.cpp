@@ -3,8 +3,9 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <GxEPD2_BW.h>
-#include <Fonts/FreeMonoBold9pt7b.h>
-#include <Fonts/FreeMonoBold24pt7b.h>
+#include "fonts/HelveticaBold14pt7b.h"
+#include "fonts/HelveticaBold20pt7b.h"
+#include "fonts/HelveticaBold32pt7b.h"
 #include <pb_decode.h>
 #include "gtfs_realtime.pb.h"
 #include "secrets.h"
@@ -190,6 +191,26 @@ static char lastNorthRow[48] = "";
 static char lastSouthRow[48] = "";
 static bool firstDraw = true;
 
+// MTA route bullet: filled disc with the route letter knocked out in white
+static void drawRouteBullet(int16_t cx, int16_t cy, int16_t r) {
+  display.fillCircle(cx, cy, r, GxEPD_BLACK);
+  display.setFont(&HelveticaBold20pt7b);
+  display.setTextColor(GxEPD_WHITE);
+  int16_t tbx, tby;
+  uint16_t tbw, tbh;
+  display.getTextBounds(ROUTE_ID, 0, 0, &tbx, &tby, &tbw, &tbh);
+  display.setCursor(cx - tbw / 2 - tbx, cy - tbh / 2 - tby);
+  display.print(ROUTE_ID);
+}
+
+static void printRightAligned(const char *text, int16_t baselineY) {
+  int16_t tbx, tby;
+  uint16_t tbw, tbh;
+  display.getTextBounds(text, 0, 0, &tbx, &tby, &tbw, &tbh);
+  display.setCursor(display.width() - 16 - tbw - tbx, baselineY);
+  display.print(text);
+}
+
 static void drawArrivals(const Arrivals &arrivals) {
   char northRow[48], southRow[48];
   formatRow(northRow, sizeof(northRow), arrivals.north, arrivals.northCount);
@@ -208,22 +229,25 @@ static void drawArrivals(const Arrivals &arrivals) {
   display.firstPage();
   do {
     display.fillScreen(GxEPD_WHITE);
+
+    drawRouteBullet(38, 38, 28);
+
     display.setTextColor(GxEPD_BLACK);
+    display.setFont(&HelveticaBold20pt7b);
+    display.setCursor(82, 48);
+    display.print("home station");
 
-    display.setFont(&FreeMonoBold9pt7b);
-    display.setCursor(10, 24);
-    display.print("(C) Home Station");
+    display.fillRect(10, 74, display.width() - 20, 3, GxEPD_BLACK);
 
-    display.setFont(&FreeMonoBold24pt7b);
-    display.setCursor(10, 130);
+    display.setFont(&HelveticaBold32pt7b);
+    display.setCursor(14, 150);
     display.print("Manhattan");
-    display.setCursor(360, 130);
-    display.print(northRow);
+    display.setCursor(14, 248);
+    display.print("Euclid");
 
-    display.setCursor(10, 230);
-    display.print("Euclid Av");
-    display.setCursor(360, 230);
-    display.print(southRow);
+    display.setFont(&HelveticaBold32pt7b);
+    printRightAligned(northRow, 150);
+    printRightAligned(southRow, 248);
   } while (display.nextPage());
 
   firstDraw = false;
@@ -235,8 +259,8 @@ static void drawMessage(const char *msg) {
   do {
     display.fillScreen(GxEPD_WHITE);
     display.setTextColor(GxEPD_BLACK);
-    display.setFont(&FreeMonoBold24pt7b);
-    display.setCursor(10, 140);
+    display.setFont(&HelveticaBold20pt7b);
+    display.setCursor(14, 140);
     display.print(msg);
   } while (display.nextPage());
   firstDraw = true; // next data draw does a clean full refresh

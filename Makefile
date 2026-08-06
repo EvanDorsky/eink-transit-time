@@ -1,4 +1,4 @@
-.PHONY: build upload monitor
+.PHONY: build upload monitor fonts
 
 build:
 	pio run
@@ -11,3 +11,6 @@ monitor:
 
 symbols:
 	pio run -t compiledb
+
+fonts:
+	./scripts/gen_fonts.sh

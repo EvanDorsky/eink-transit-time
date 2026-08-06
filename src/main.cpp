@@ -22,7 +22,7 @@ static const char *FEED_URL =
 static const char *ROUTE_ID = "C";
 static const char *STOP_NORTH = "HOME_N"; // Manhattan-bound
 static const char *STOP_SOUTH = "HOME_S"; // Euclid Av-bound
-static const uint32_t REFRESH_MS = 45 * 1000;
+static const uint32_t REFRESH_MS = 15 * 1000;
 static const size_t FEED_BUF_CAP = 1024 * 1024;
 
 GxEPD2_BW<GxEPD2_579_GDEY0579T93, GxEPD2_579_GDEY0579T93::HEIGHT>
@@ -243,6 +243,7 @@ void setup() {
 
   // NTP so we can turn absolute arrival timestamps into minutes-away
   configTime(0, 0, "pool.ntp.org", "time.google.com");
+  drawMessage("setting clock...");
   while (time(nullptr) < 1600000000) delay(200);
 }
 

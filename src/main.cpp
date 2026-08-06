@@ -3,6 +3,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <GxEPD2_BW.h>
+#include <ArduinoJson.h>
 #include "render.h"
 #include <pb_decode.h>
 #include "gtfs_realtime.pb.h"
@@ -22,6 +23,11 @@ static const char *FEED_URL =
 static const char *ROUTE_ID = "C";
 static const char *STOP_NORTH = "HOME_N"; // Manhattan-bound
 static const char *STOP_SOUTH = "HOME_S"; // Euclid Av-bound
+
+// Home bus stop, westbound (downtown), serves both B25 and B26
+static const char *BUS_URL =
+    "https://bustime.mta.info/api/siri/stop-monitoring.json?key=" BUSTIME_API_KEY
+    "&MonitoringRef=BUS_STOP_W&MaximumStopVisits=8";
 static const uint32_t REFRESH_MS = 15 * 1000;
 static const size_t FEED_BUF_CAP = 1024 * 1024;
 
@@ -37,6 +43,8 @@ struct Arrivals {
   size_t northCount;
   time_t south[MAX_ARRIVALS];
   size_t southCount;
+  time_t bus[MAX_ARRIVALS];
+  size_t busCount;
 };
 
 struct EntityCtx {
@@ -93,7 +101,6 @@ static bool entityCb(pb_istream_t *stream, const pb_field_t *field,
 }
 
 static bool decodeFeed(const uint8_t *buf, size_t len, Arrivals *arrivals) {
-  memset(arrivals, 0, sizeof(*arrivals));
   transit_realtime_FeedMessage msg = transit_realtime_FeedMessage_init_default;
   msg.entity.funcs.decode = &entityCb;
   msg.entity.arg = arrivals;
@@ -101,6 +108,59 @@ static bool decodeFeed(const uint8_t *buf, size_t len, Arrivals *arrivals) {
   if (!pb_decode(&stream, transit_realtime_FeedMessage_fields, &msg)) {
     Serial.printf("pb_decode failed: %s\n", PB_GET_ERROR(&stream));
     return false;
+  }
+  return true;
+}
+
+// ---------------- bus (SIRI StopMonitoring, JSON) ----------------
+
+// "2026-08-05T23:21:07.528-04:00" -> epoch seconds. Device TZ is UTC
+// (configTime offset 0), so mktime() interprets struct tm as UTC.
+static time_t parseIso8601(const char *s) {
+  int Y, M, D, h, m;
+  float sec;
+  if (sscanf(s, "%d-%d-%dT%d:%d:%f", &Y, &M, &D, &h, &m, &sec) != 6) return 0;
+  struct tm tmv = {};
+  tmv.tm_year = Y - 1900;
+  tmv.tm_mon = M - 1;
+  tmv.tm_mday = D;
+  tmv.tm_hour = h;
+  tmv.tm_min = m;
+  tmv.tm_sec = (int)sec;
+  time_t t = mktime(&tmv);
+
+  const char *tpos = strchr(s, 'T');
+  const char *plus = strrchr(s, '+');
+  const char *minus = strrchr(s, '-');
+  const char *tz = nullptr;
+  if (plus && plus > tpos) tz = plus;
+  if (minus && minus > tpos && (!tz || minus > tz)) tz = minus;
+  if (tz) {
+    int oh, om;
+    if (sscanf(tz + 1, "%d:%d", &oh, &om) == 2) {
+      int off = oh * 3600 + om * 60;
+      t += (*tz == '-') ? off : -off;
+    }
+  }
+  return t;
+}
+
+static bool parseBusJson(const uint8_t *buf, size_t len, Arrivals *arrivals) {
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, buf, len);
+  if (err) {
+    Serial.printf("bus json error: %s\n", err.c_str());
+    return false;
+  }
+  JsonArray visits = doc["Siri"]["ServiceDelivery"]["StopMonitoringDelivery"]
+                        [0]["MonitoredStopVisit"];
+  for (JsonObject v : visits) {
+    JsonObject call = v["MonitoredVehicleJourney"]["MonitoredCall"];
+    const char *eta = call["ExpectedArrivalTime"] | call["ExpectedDepartureTime"]
+                          | (const char *)nullptr;
+    if (!eta) continue; // scheduled-only trip, no realtime estimate
+    time_t t = parseIso8601(eta);
+    if (t) addArrival(arrivals->bus, &arrivals->busCount, t);
   }
   return true;
 }
@@ -134,7 +194,7 @@ class PsramSink : public Stream {
 
 static PsramSink feedSink;
 
-static bool fetchFeed() {
+static bool fetchUrl(const char *url) {
   if (!feedSink.begin()) {
     Serial.println("psram alloc failed");
     return false;
@@ -143,7 +203,7 @@ static bool fetchFeed() {
   client.setInsecure(); // public read-only data; skip CA validation
   HTTPClient http;
   http.setTimeout(15000);
-  if (!http.begin(client, FEED_URL)) return false;
+  if (!http.begin(client, url)) return false;
   int code = http.GET();
   bool ok = false;
   if (code == HTTP_CODE_OK) {
@@ -188,24 +248,28 @@ static char lastNorthRow[48] = "";
 static char lastSouthRow[48] = "";
 static bool firstDraw = true;
 
+static char lastBusRow[48] = "";
+
 static void drawArrivals(const Arrivals &arrivals) {
-  char northRow[48], southRow[48];
+  char northRow[48], southRow[48], busRow[48];
   formatRow(northRow, sizeof(northRow), arrivals.north, arrivals.northCount);
   formatRow(southRow, sizeof(southRow), arrivals.south, arrivals.southCount);
+  formatRow(busRow, sizeof(busRow), arrivals.bus, arrivals.busCount);
 
   if (!firstDraw && strcmp(northRow, lastNorthRow) == 0 &&
-      strcmp(southRow, lastSouthRow) == 0)
+      strcmp(southRow, lastSouthRow) == 0 && strcmp(busRow, lastBusRow) == 0)
     return; // nothing changed, don't flash the panel
 
   strcpy(lastNorthRow, northRow);
   strcpy(lastSouthRow, southRow);
+  strcpy(lastBusRow, busRow);
 
   if (firstDraw) display.setFullWindow();
   else display.setPartialWindow(0, 0, display.width(), display.height());
 
   display.firstPage();
   do {
-    renderArrivals(display, northRow, southRow);
+    renderArrivals(display, northRow, southRow, busRow);
   } while (display.nextPage());
 
   firstDraw = false;
@@ -263,7 +327,13 @@ void loop() {
   }
 
   Arrivals arrivals;
-  if (fetchFeed() && decodeFeed(feedSink.buf, feedSink.len, &arrivals)) {
+  memset(&arrivals, 0, sizeof(arrivals));
+  bool subwayOk =
+      fetchUrl(FEED_URL) && decodeFeed(feedSink.buf, feedSink.len, &arrivals);
+  bool busOk =
+      fetchUrl(BUS_URL) && parseBusJson(feedSink.buf, feedSink.len, &arrivals);
+
+  if (subwayOk || busOk) {
     failures = 0;
     drawArrivals(arrivals);
   } else if (++failures >= 3) {

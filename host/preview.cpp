@@ -17,10 +17,11 @@ int main(int argc, char **argv) {
     renderMessage(canvas, argv[2]);
     if (argc > 3) out = argv[3];
   } else {
-    const char *north = argc > 1 ? argv[1] : "3,8,15 min";
-    const char *south = argc > 2 ? argv[2] : "5,12 min";
-    renderArrivals(canvas, north, south);
-    if (argc > 3) out = argv[3];
+    const char *north = argc > 1 ? argv[1] : "3,8,15";
+    const char *south = argc > 2 ? argv[2] : "5,12";
+    const char *bus = argc > 3 ? argv[3] : "7,22";
+    renderArrivals(canvas, north, south, bus);
+    if (argc > 4) out = argv[4];
   }
 
   FILE *f = fopen(out, "wb");

@@ -176,13 +176,12 @@ static void formatRow(char *out, size_t outLen, const time_t *arr,
   int mins[4];
   int n = timesToMinutes(arr, count, mins, 4);
   if (n == 0) {
-    snprintf(out, outLen, "--");
+    snprintf(out, outLen, "");
     return;
   }
   size_t pos = 0;
   for (int i = 0; i < n; i++)
     pos += snprintf(out + pos, outLen - pos, "%s%d", i ? "," : "", mins[i]);
-  snprintf(out + pos, outLen - pos, " min");
 }
 
 static char lastNorthRow[48] = "";

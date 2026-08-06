@@ -1,8 +1,8 @@
 .PHONY: build upload monitor fonts preview
 
 GFX_DIR = .pio/libdeps/crowpanel_epaper_579/Adafruit GFX Library
-NORTH ?= 3,8,15 min
-SOUTH ?= 5,12 min
+NORTH ?= 3,8,15
+SOUTH ?= 5,12
 
 build:
 	pio run

@@ -24,13 +24,22 @@ static void drawRouteBullet(Adafruit_GFX &gfx, int16_t cx, int16_t cy,
   gfx.print(ROUTE_LETTER);
 }
 
-static void printRightAligned(Adafruit_GFX &gfx, const char *text,
-                              int16_t baselineY) {
+// Big right-aligned minute numbers with a small "min" tucked underneath,
+// like the real countdown clocks
+static void printArrivalRow(Adafruit_GFX &gfx, const char *nums,
+                            int16_t baselineY) {
+  if (!nums[0]) return;
   int16_t tbx, tby;
   uint16_t tbw, tbh;
-  gfx.getTextBounds(text, 0, 0, &tbx, &tby, &tbw, &tbh);
+  gfx.setFont(&HelveticaBold32pt7b);
+  gfx.getTextBounds(nums, 0, 0, &tbx, &tby, &tbw, &tbh);
   gfx.setCursor(gfx.width() - 16 - tbw - tbx, baselineY);
-  gfx.print(text);
+  gfx.print(nums);
+
+  gfx.setFont(&HelveticaBold14pt7b);
+  gfx.getTextBounds("min", 0, 0, &tbx, &tby, &tbw, &tbh);
+  gfx.setCursor(gfx.width() - 16 - tbw - tbx, baselineY + 28);
+  gfx.print("min");
 }
 
 void renderArrivals(Adafruit_GFX &gfx, const char *northRow,
@@ -41,20 +50,19 @@ void renderArrivals(Adafruit_GFX &gfx, const char *northRow,
 
   gfx.setTextColor(K_BLACK);
   gfx.setFont(&HelveticaBold20pt7b);
-  gfx.setCursor(82, 48);
+  gfx.setCursor(82, 51);
   gfx.print(STATION_NAME);
 
   gfx.fillRect(10, 74, gfx.width() - 20, 3, K_BLACK);
 
   gfx.setFont(&HelveticaBold32pt7b);
-  gfx.setCursor(14, 150);
+  gfx.setCursor(14, 146);
   gfx.print("Manhattan");
-  gfx.setCursor(14, 248);
+  gfx.setCursor(14, 240);
   gfx.print("Euclid");
 
-  gfx.setFont(&HelveticaBold32pt7b);
-  printRightAligned(gfx, northRow, 150);
-  printRightAligned(gfx, southRow, 248);
+  printArrivalRow(gfx, northRow, 146);
+  printArrivalRow(gfx, southRow, 240);
 }
 
 void renderMessage(Adafruit_GFX &gfx, const char *msg) {

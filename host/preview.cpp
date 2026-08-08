@@ -19,9 +19,10 @@ int main(int argc, char **argv) {
   } else {
     const char *north = argc > 1 ? argv[1] : "3,8,15";
     const char *south = argc > 2 ? argv[2] : "5,12";
-    const char *bus = argc > 3 ? argv[3] : "7,22";
-    renderArrivals(canvas, north, south, bus);
-    if (argc > 4) out = argv[4];
+    const char *busWest = argc > 3 ? argv[3] : "7,22";
+    const char *busEast = argc > 4 ? argv[4] : "4,31";
+    renderArrivals(canvas, north, south, busWest, busEast);
+    if (argc > 5) out = argv[5];
   }
 
   FILE *f = fopen(out, "wb");

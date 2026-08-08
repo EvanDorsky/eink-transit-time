@@ -3,7 +3,8 @@
 GFX_DIR = .pio/libdeps/crowpanel_epaper_579/Adafruit GFX Library
 NORTH ?= 3,8,15
 SOUTH ?= 5,12
-BUS ?= 7,22
+BUSW ?= 7,22
+BUSE ?= 4,31
 
 build:
 	pio run
@@ -25,5 +26,5 @@ preview:
 	c++ -O2 -std=c++17 -DARDUINO=100 -Ihost/shim -I"$(GFX_DIR)" -Iinclude \
 		host/preview.cpp src/render.cpp "$(GFX_DIR)/Adafruit_GFX.cpp" \
 		-o host/build/preview
-	./host/build/preview "$(NORTH)" "$(SOUTH)" "$(BUS)" host/build/preview.pgm
+	./host/build/preview "$(NORTH)" "$(SOUTH)" "$(BUSW)" "$(BUSE)" host/build/preview.pgm
 	python3 scripts/pgm2png.py host/build/preview.pgm preview.png

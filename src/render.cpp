@@ -9,12 +9,12 @@ static const uint16_t K_BLACK = 0x0000;
 static const uint16_t K_WHITE = 0xFFFF;
 
 static const char *ROUTE_LETTER = "C";
-static const char *STATION_NAME = "home station";
 
-// Three data rows between the header rule (y=74) and the panel bottom (272):
-// 26pt digits with the small "min" tag tucked under their right edge
-static const int16_t ROW_BASELINES[] = {119, 183, 246};
+// Four data rows fill the whole 272px panel: 26pt digits with the small
+// "min" tag tucked under their right edge
+static const int16_t ROW_BASELINES[] = {45, 111, 177, 243};
 static const int16_t MIN_TAG_DROP = 24;
+static const int16_t LABEL_X = 68;
 
 // MTA route bullet: filled disc with the route letter knocked out in white
 static void drawRouteBullet(Adafruit_GFX &gfx, int16_t cx, int16_t cy,
@@ -27,14 +27,15 @@ static void drawRouteBullet(Adafruit_GFX &gfx, int16_t cx, int16_t cy,
   gfx.getTextBounds(ROUTE_LETTER, 0, 0, &tbx, &tby, &tbw, &tbh);
   gfx.setCursor(cx - tbw / 2 - tbx, cy - tbh / 2 - tby);
   gfx.print(ROUTE_LETTER);
+  gfx.setTextColor(K_BLACK);
 }
 
-// Big right-aligned minute numbers with a small "min" tucked underneath,
-// like the real countdown clocks
+// Left label plus big right-aligned minute numbers with a small "min"
+// underneath, like the real countdown clocks
 static void printArrivalRow(Adafruit_GFX &gfx, const char *label,
                             const char *nums, int16_t baselineY) {
   gfx.setFont(&HelveticaBold26pt7b);
-  gfx.setCursor(14, baselineY);
+  gfx.setCursor(LABEL_X, baselineY);
   gfx.print(label);
 
   if (!nums[0]) return;
@@ -51,27 +52,25 @@ static void printArrivalRow(Adafruit_GFX &gfx, const char *label,
 }
 
 void renderArrivals(Adafruit_GFX &gfx, const char *northRow,
-                    const char *southRow, const char *busRow) {
+                    const char *southRow, const char *busWestRow,
+                    const char *busEastRow) {
   gfx.fillScreen(K_WHITE);
-
-  drawRouteBullet(gfx, 38, 38, 28);
-
   gfx.setTextColor(K_BLACK);
-  gfx.setFont(&HelveticaBold20pt7b);
-  gfx.setCursor(82, 51);
-  gfx.print(STATION_NAME);
 
-  gfx.fillRect(10, 74, gfx.width() - 20, 3, K_BLACK);
+  // subway rows carry the (C) bullet, centered on the digit caps
+  drawRouteBullet(gfx, 34, ROW_BASELINES[0] - 18, 26);
+  drawRouteBullet(gfx, 34, ROW_BASELINES[1] - 18, 26);
 
   printArrivalRow(gfx, "Manhattan", northRow, ROW_BASELINES[0]);
   printArrivalRow(gfx, "Euclid", southRow, ROW_BASELINES[1]);
-  printArrivalRow(gfx, "B25/26 Dtwn", busRow, ROW_BASELINES[2]);
+  printArrivalRow(gfx, "B25/26 Dtwn", busWestRow, ROW_BASELINES[2]);
+  printArrivalRow(gfx, "B25/26 East", busEastRow, ROW_BASELINES[3]);
 }
 
 void renderMessage(Adafruit_GFX &gfx, const char *msg) {
   gfx.fillScreen(K_WHITE);
   gfx.setTextColor(K_BLACK);
-  gfx.setFont(&HelveticaBold20pt7b);
+  gfx.setFont(&HelveticaBold26pt7b);
   gfx.setCursor(14, 140);
   gfx.print(msg);
 }

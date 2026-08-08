@@ -5,5 +5,6 @@
 // host-side preview tool (GFXcanvas1). Must not depend on anything but
 // Adafruit_GFX.
 void renderArrivals(Adafruit_GFX &gfx, const char *northRow,
-                    const char *southRow, const char *busRow);
+                    const char *southRow, const char *busWestRow,
+                    const char *busEastRow);
 void renderMessage(Adafruit_GFX &gfx, const char *msg);

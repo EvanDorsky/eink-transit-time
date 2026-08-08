@@ -24,10 +24,13 @@ static const char *ROUTE_ID = "C";
 static const char *STOP_NORTH = "HOME_N"; // Manhattan-bound
 static const char *STOP_SOUTH = "HOME_S"; // Euclid Av-bound
 
-// Home bus stop, westbound (downtown), serves both B25 and B26
-static const char *BUS_URL =
+// The home bus stop, both directions; each stop serves B25 and B26
+static const char *BUS_URL_WEST = // downtown-bound
     "https://bustime.mta.info/api/siri/stop-monitoring.json?key=" BUSTIME_API_KEY
     "&MonitoringRef=BUS_STOP_W&MaximumStopVisits=8";
+static const char *BUS_URL_EAST =
+    "https://bustime.mta.info/api/siri/stop-monitoring.json?key=" BUSTIME_API_KEY
+    "&MonitoringRef=BUS_STOP_E&MaximumStopVisits=8";
 static const uint32_t REFRESH_MS = 15 * 1000;
 static const size_t FEED_BUF_CAP = 1024 * 1024;
 
@@ -43,8 +46,10 @@ struct Arrivals {
   size_t northCount;
   time_t south[MAX_ARRIVALS];
   size_t southCount;
-  time_t bus[MAX_ARRIVALS];
-  size_t busCount;
+  time_t busWest[MAX_ARRIVALS];
+  size_t busWestCount;
+  time_t busEast[MAX_ARRIVALS];
+  size_t busEastCount;
 };
 
 struct EntityCtx {
@@ -145,7 +150,8 @@ static time_t parseIso8601(const char *s) {
   return t;
 }
 
-static bool parseBusJson(const uint8_t *buf, size_t len, Arrivals *arrivals) {
+static bool parseBusJson(const uint8_t *buf, size_t len, time_t *times,
+                         size_t *count) {
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, buf, len);
   if (err) {
@@ -160,7 +166,7 @@ static bool parseBusJson(const uint8_t *buf, size_t len, Arrivals *arrivals) {
                           | (const char *)nullptr;
     if (!eta) continue; // scheduled-only trip, no realtime estimate
     time_t t = parseIso8601(eta);
-    if (t) addArrival(arrivals->bus, &arrivals->busCount, t);
+    if (t) addArrival(times, count, t);
   }
   return true;
 }
@@ -248,28 +254,35 @@ static char lastNorthRow[48] = "";
 static char lastSouthRow[48] = "";
 static bool firstDraw = true;
 
-static char lastBusRow[48] = "";
+static char lastBusWestRow[48] = "";
+static char lastBusEastRow[48] = "";
 
 static void drawArrivals(const Arrivals &arrivals) {
-  char northRow[48], southRow[48], busRow[48];
+  char northRow[48], southRow[48], busWestRow[48], busEastRow[48];
   formatRow(northRow, sizeof(northRow), arrivals.north, arrivals.northCount);
   formatRow(southRow, sizeof(southRow), arrivals.south, arrivals.southCount);
-  formatRow(busRow, sizeof(busRow), arrivals.bus, arrivals.busCount);
+  formatRow(busWestRow, sizeof(busWestRow), arrivals.busWest,
+            arrivals.busWestCount);
+  formatRow(busEastRow, sizeof(busEastRow), arrivals.busEast,
+            arrivals.busEastCount);
 
   if (!firstDraw && strcmp(northRow, lastNorthRow) == 0 &&
-      strcmp(southRow, lastSouthRow) == 0 && strcmp(busRow, lastBusRow) == 0)
+      strcmp(southRow, lastSouthRow) == 0 &&
+      strcmp(busWestRow, lastBusWestRow) == 0 &&
+      strcmp(busEastRow, lastBusEastRow) == 0)
     return; // nothing changed, don't flash the panel
 
   strcpy(lastNorthRow, northRow);
   strcpy(lastSouthRow, southRow);
-  strcpy(lastBusRow, busRow);
+  strcpy(lastBusWestRow, busWestRow);
+  strcpy(lastBusEastRow, busEastRow);
 
   if (firstDraw) display.setFullWindow();
   else display.setPartialWindow(0, 0, display.width(), display.height());
 
   display.firstPage();
   do {
-    renderArrivals(display, northRow, southRow, busRow);
+    renderArrivals(display, northRow, southRow, busWestRow, busEastRow);
   } while (display.nextPage());
 
   firstDraw = false;
@@ -330,10 +343,14 @@ void loop() {
   memset(&arrivals, 0, sizeof(arrivals));
   bool subwayOk =
       fetchUrl(FEED_URL) && decodeFeed(feedSink.buf, feedSink.len, &arrivals);
-  bool busOk =
-      fetchUrl(BUS_URL) && parseBusJson(feedSink.buf, feedSink.len, &arrivals);
+  bool busWestOk = fetchUrl(BUS_URL_WEST) &&
+                   parseBusJson(feedSink.buf, feedSink.len, arrivals.busWest,
+                                &arrivals.busWestCount);
+  bool busEastOk = fetchUrl(BUS_URL_EAST) &&
+                   parseBusJson(feedSink.buf, feedSink.len, arrivals.busEast,
+                                &arrivals.busEastCount);
 
-  if (subwayOk || busOk) {
+  if (subwayOk || busWestOk || busEastOk) {
     failures = 0;
     drawArrivals(arrivals);
   } else if (++failures >= 3) {

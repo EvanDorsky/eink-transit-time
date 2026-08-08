@@ -12,7 +12,7 @@ BIN="$(mktemp -d)/fontconvert"
 cc scripts/fontconvert.c -o "$BIN" -I"$GFX_DIR" $(pkg-config --cflags --libs freetype2)
 mkdir -p "$OUT_DIR"
 
-for size in 14 20 26 32; do
+for size in 14 20 22 26 32; do
   FONTCONVERT_FACE=1 FONTCONVERT_NAME=HelveticaBold \
     "$BIN" Helvetica.ttc "$size" > "$OUT_DIR/HelveticaBold${size}pt7b.h"
   echo "generated $OUT_DIR/HelveticaBold${size}pt7b.h"

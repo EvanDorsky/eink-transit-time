@@ -1,6 +1,7 @@
 #include "render.h"
 #include "fonts/HelveticaBold14pt7b.h"
 #include "fonts/HelveticaBold20pt7b.h"
+#include "fonts/HelveticaBold22pt7b.h"
 #include "fonts/HelveticaBold26pt7b.h"
 
 // Same values as GxEPD_BLACK / GxEPD_WHITE, redefined here so this file
@@ -10,17 +11,16 @@ static const uint16_t K_WHITE = 0xFFFF;
 
 static const char *ROUTE_LETTER = "C";
 
-// Four data rows fill the whole 272px panel: 26pt digits with the small
-// "min" tag tucked under their right edge
-static const int16_t ROW_BASELINES[] = {45, 111, 177, 243};
-static const int16_t MIN_TAG_DROP = 24;
-static const int16_t LABEL_X = 68;
+// Four data rows, vertically centered on the 272px panel (equal breathing
+// room top and bottom): 26pt digits with a small inline "min" at the margin
+static const int16_t ROW_BASELINES[] = {61, 123, 185, 247};
+static const int16_t LABEL_X = 78;
 
 // MTA route bullet: filled disc with the route letter knocked out in white
 static void drawRouteBullet(Adafruit_GFX &gfx, int16_t cx, int16_t cy,
                             int16_t r) {
   gfx.fillCircle(cx, cy, r, K_BLACK);
-  gfx.setFont(&HelveticaBold20pt7b);
+  gfx.setFont(&HelveticaBold22pt7b);
   gfx.setTextColor(K_WHITE);
   int16_t tbx, tby;
   uint16_t tbw, tbh;
@@ -41,14 +41,18 @@ static void printArrivalRow(Adafruit_GFX &gfx, const char *label,
   if (!nums[0]) return;
   int16_t tbx, tby;
   uint16_t tbw, tbh;
-  gfx.getTextBounds(nums, 0, 0, &tbx, &tby, &tbw, &tbh);
-  gfx.setCursor(gfx.width() - 16 - tbw - tbx, baselineY);
-  gfx.print(nums);
 
+  // small "min" sits at the right margin on the shared baseline
   gfx.setFont(&HelveticaBold14pt7b);
   gfx.getTextBounds("min", 0, 0, &tbx, &tby, &tbw, &tbh);
-  gfx.setCursor(gfx.width() - 16 - tbw - tbx, baselineY + MIN_TAG_DROP);
+  int16_t minX = gfx.width() - 16 - tbw - tbx;
+  gfx.setCursor(minX, baselineY);
   gfx.print("min");
+
+  gfx.setFont(&HelveticaBold26pt7b);
+  gfx.getTextBounds(nums, 0, 0, &tbx, &tby, &tbw, &tbh);
+  gfx.setCursor(minX - 8 - tbw - tbx, baselineY);
+  gfx.print(nums);
 }
 
 void renderArrivals(Adafruit_GFX &gfx, const char *northRow,
@@ -58,8 +62,8 @@ void renderArrivals(Adafruit_GFX &gfx, const char *northRow,
   gfx.setTextColor(K_BLACK);
 
   // subway rows carry the (C) bullet, centered on the digit caps
-  drawRouteBullet(gfx, 34, ROW_BASELINES[0] - 18, 26);
-  drawRouteBullet(gfx, 34, ROW_BASELINES[1] - 18, 26);
+  drawRouteBullet(gfx, 42, ROW_BASELINES[0] - 18, 26);
+  drawRouteBullet(gfx, 42, ROW_BASELINES[1] - 18, 26);
 
   printArrivalRow(gfx, "Manhattan", northRow, ROW_BASELINES[0]);
   printArrivalRow(gfx, "Euclid", southRow, ROW_BASELINES[1]);

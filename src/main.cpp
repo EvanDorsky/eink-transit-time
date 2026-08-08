@@ -208,7 +208,7 @@ static bool fetchUrl(const char *url) {
   WiFiClientSecure client;
   client.setInsecure(); // public read-only data; skip CA validation
   HTTPClient http;
-  http.setTimeout(15000);
+  http.setTimeout(5000);
   if (!http.begin(client, url)) return false;
   int code = http.GET();
   bool ok = false;

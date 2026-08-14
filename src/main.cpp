@@ -4,12 +4,14 @@
 #include <HTTPClient.h>
 #include <GxEPD2_BW.h>
 #include <ArduinoJson.h>
+#include "HomeSpan.h"
 #include "render.h"
 #include <pb_decode.h>
 #include "gtfs_realtime.pb.h"
 #include "secrets.h"
 
 // CrowPanel 5.79" pinout (dual-SSD1683 panel, GDEY0579T93)
+#define HOME_KEY 2
 #define EPD_POWER 7
 #define EPD_MOSI 11
 #define EPD_SCK 12
@@ -153,7 +155,9 @@ static time_t parseIso8601(const char *s) {
 static bool parseBusJson(const uint8_t *buf, size_t len, time_t *times,
                          size_t *count) {
   JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, buf, len);
+  // SIRI nests ~11 levels deep; ArduinoJson's default limit is 10
+  DeserializationError err =
+      deserializeJson(doc, buf, len, DeserializationOption::NestingLimit(16));
   if (err) {
     Serial.printf("bus json error: %s\n", err.c_str());
     return false;
@@ -297,6 +301,40 @@ static void drawMessage(const char *msg) {
   // firstDraw = true; // next data draw does a clean full refresh
 }
 
+// ---------------- HomeKit (HomeSpan) ----------------
+
+// Stateless programmable switch on the panel's menu key: publishes
+// single/double/long press events for HomeKit automations to bind to
+struct HomeButton : Service::StatelessProgrammableSwitch {
+  SpanCharacteristic *switchEvent;
+
+  HomeButton(int pin) : Service::StatelessProgrammableSwitch() {
+    switchEvent = new Characteristic::ProgrammableSwitchEvent();
+    new SpanButton(pin);
+  }
+
+  void button(int pin, int pressType) override {
+    Serial.printf("button event: press type %d\n", pressType);
+    // SpanButton press types match HAP event values (0/1/2)
+    switchEvent->setVal(pressType);
+  }
+};
+
+static void setupHomeKit() {
+  homeSpan.setWifiCredentials(WIFI_SSID, WIFI_PASS);
+  homeSpan.begin(Category::ProgrammableSwitches, "Transit Display");
+
+  new SpanAccessory();
+  new Service::AccessoryInformation();
+  new Characteristic::Identify();
+  new Characteristic::Name("Transit Button");
+  new HomeButton(HOME_KEY);
+
+  // HAP gets serviced on its own FreeRTOS task, so the blocking
+  // fetch/render loop below never makes HomeKit "Not Responding"
+  homeSpan.autoPoll();
+}
+
 // ---------------- setup / loop ----------------
 
 void setup() {
@@ -312,8 +350,8 @@ void setup() {
 
   drawMessage("connecting...");
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  // HomeSpan owns WiFi (credentials, connection, reconnection)
+  setupHomeKit();
   while (WiFi.status() != WL_CONNECTED) delay(500);
   Serial.printf("connected: %s\n", WiFi.localIP().toString().c_str());
 
@@ -327,26 +365,24 @@ void loop() {
   static uint32_t lastFetch = 0;
   static int failures = 0;
 
+
   if (lastFetch != 0 && millis() - lastFetch < REFRESH_MS) {
     delay(250);
     return;
   }
   lastFetch = millis();
 
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("wifi dropped, reconnecting");
-    WiFi.reconnect();
-    return;
-  }
+  if (WiFi.status() != WL_CONNECTED) return; // HomeSpan handles reconnection
 
   Arrivals arrivals;
   memset(&arrivals, 0, sizeof(arrivals));
   bool subwayOk =
       fetchUrl(FEED_URL) && decodeFeed(feedSink.buf, feedSink.len, &arrivals);
-  bool busWestOk = fetchUrl(BUS_URL_WEST) &&
+  const bool busEnabled = true;
+  bool busWestOk = busEnabled && fetchUrl(BUS_URL_WEST) &&
                    parseBusJson(feedSink.buf, feedSink.len, arrivals.busWest,
                                 &arrivals.busWestCount);
-  bool busEastOk = fetchUrl(BUS_URL_EAST) &&
+  bool busEastOk = busEnabled && fetchUrl(BUS_URL_EAST) &&
                    parseBusJson(feedSink.buf, feedSink.len, arrivals.busEast,
                                 &arrivals.busEastCount);
 

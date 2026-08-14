@@ -5,6 +5,8 @@
 #include <GxEPD2_BW.h>
 #include <ArduinoJson.h>
 #include "HomeSpan.h"
+#include "ble_buttons.h"
+#include <atomic>
 #include "render.h"
 #include <pb_decode.h>
 #include "gtfs_realtime.pb.h"
@@ -303,6 +305,11 @@ static void drawMessage(const char *msg) {
 
 // ---------------- HomeKit (HomeSpan) ----------------
 
+// BLE button presses land on the NimBLE host task; setVal() isn't
+// thread-safe vs HomeSpan's poll task, so they're counted here and fired
+// from HomeButton::loop(), which runs inside the poll task.
+static std::atomic<uint32_t> pendingBlePresses{0};
+
 // Stateless programmable switch on the panel's menu key: publishes
 // single/double/long press events for HomeKit automations to bind to
 struct HomeButton : Service::StatelessProgrammableSwitch {
@@ -317,6 +324,14 @@ struct HomeButton : Service::StatelessProgrammableSwitch {
     Serial.printf("button event: press type %d\n", pressType);
     // SpanButton press types match HAP event values (0/1/2)
     switchEvent->setVal(pressType);
+  }
+
+  void loop() override {
+    while (pendingBlePresses.load() > 0) {
+      pendingBlePresses--;
+      Serial.println("ble button event: single press");
+      switchEvent->setVal(0); // HAP single press
+    }
   }
 };
 
@@ -352,7 +367,17 @@ void setup() {
 
   // HomeSpan owns WiFi (credentials, connection, reconnection)
   setupHomeKit();
+
+  bleButtonsBegin([](const char *addr, uint32_t count) {
+    Serial.printf("[ble] press #%lu from %s\n", (unsigned long)count, addr);
+    pendingBlePresses++;
+  });
+
   while (WiFi.status() != WL_CONNECTED) delay(500);
+
+  // Modem sleep makes the ESP32 miss mDNS multicast, so the home hub can
+  // take hours to rediscover us after a reboot; panel is mains-powered
+  WiFi.setSleep(false);
   Serial.printf("connected: %s\n", WiFi.localIP().toString().c_str());
 
   // NTP so we can turn absolute arrival timestamps into minutes-away

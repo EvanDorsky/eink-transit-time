@@ -9,24 +9,22 @@
 static const uint16_t K_BLACK = 0x0000;
 static const uint16_t K_WHITE = 0xFFFF;
 
-static const char *ROUTE_LETTER = "C";
-
 // Four data rows, vertically centered on the 272px panel (equal breathing
 // room top and bottom): 26pt digits with a small inline "min" at the margin
 static const int16_t ROW_BASELINES[] = {61, 123, 185, 247};
 static const int16_t LABEL_X = 78;
 
 // MTA route bullet: filled disc with the route letter knocked out in white
-static void drawRouteBullet(Adafruit_GFX &gfx, int16_t cx, int16_t cy,
-                            int16_t r) {
+static void drawRouteBullet(Adafruit_GFX &gfx, const char *letter, int16_t cx,
+                            int16_t cy, int16_t r) {
   gfx.fillCircle(cx, cy, r, K_BLACK);
   gfx.setFont(&HelveticaBold22pt7b);
   gfx.setTextColor(K_WHITE);
   int16_t tbx, tby;
   uint16_t tbw, tbh;
-  gfx.getTextBounds(ROUTE_LETTER, 0, 0, &tbx, &tby, &tbw, &tbh);
+  gfx.getTextBounds(letter, 0, 0, &tbx, &tby, &tbw, &tbh);
   gfx.setCursor(cx - tbw / 2 - tbx, cy - tbh / 2 - tby);
-  gfx.print(ROUTE_LETTER);
+  gfx.print(letter);
   gfx.setTextColor(K_BLACK);
 }
 
@@ -55,15 +53,15 @@ static void printArrivalRow(Adafruit_GFX &gfx, const char *label,
   gfx.print(nums);
 }
 
-void renderArrivals(Adafruit_GFX &gfx, const char *northRow,
-                    const char *southRow, const char *busWestRow,
-                    const char *busEastRow) {
+void renderArrivals(Adafruit_GFX &gfx, const char *routeLetter,
+                    const char *northRow, const char *southRow,
+                    const char *busWestRow, const char *busEastRow) {
   gfx.fillScreen(K_WHITE);
   gfx.setTextColor(K_BLACK);
 
-  // subway rows carry the (C) bullet, centered on the digit caps
-  drawRouteBullet(gfx, 42, ROW_BASELINES[0] - 18, 26);
-  drawRouteBullet(gfx, 42, ROW_BASELINES[1] - 18, 26);
+  // subway rows carry the route bullet, centered on the digit caps
+  drawRouteBullet(gfx, routeLetter, 42, ROW_BASELINES[0] - 18, 26);
+  drawRouteBullet(gfx, routeLetter, 42, ROW_BASELINES[1] - 18, 26);
 
   printArrivalRow(gfx, "Manhattan", northRow, ROW_BASELINES[0]);
   printArrivalRow(gfx, "Euclid", southRow, ROW_BASELINES[1]);

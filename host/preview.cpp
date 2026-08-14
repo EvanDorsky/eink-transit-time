@@ -1,6 +1,6 @@
 // Host-side preview: renders the display layout into a 1-bit canvas using
 // the exact same render.cpp + font bitmaps as the firmware, writes a PGM.
-//   preview [north-row] [south-row] [out.pgm]
+//   preview [north] [south] [bus-west] [bus-east] [route-letter] [out.pgm]
 //   preview --message "text" [out.pgm]
 #include <stdio.h>
 #include <string.h>
@@ -21,8 +21,9 @@ int main(int argc, char **argv) {
     const char *south = argc > 2 ? argv[2] : "5,12";
     const char *busWest = argc > 3 ? argv[3] : "7,22";
     const char *busEast = argc > 4 ? argv[4] : "4,31";
-    renderArrivals(canvas, north, south, busWest, busEast);
-    if (argc > 5) out = argv[5];
+    const char *route = argc > 5 ? argv[5] : "C";
+    renderArrivals(canvas, route, north, south, busWest, busEast);
+    if (argc > 6) out = argv[6];
   }
 
   FILE *f = fopen(out, "wb");

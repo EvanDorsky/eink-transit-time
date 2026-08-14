@@ -24,7 +24,10 @@
 
 static const char *FEED_URL =
     "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace";
-static const char *ROUTE_ID = "C";
+// Late nights the C stops running and the A runs local past this stop, so
+// A trains only appear at HOME_STOP when they're actually stopping here
+static const char *ROUTE_PRIMARY = "C";
+static const char *ROUTE_FALLBACK = "A";
 static const char *STOP_NORTH = "HOME_N"; // Manhattan-bound
 static const char *STOP_SOUTH = "HOME_S"; // Euclid Av-bound
 
@@ -46,10 +49,14 @@ GxEPD2_BW<GxEPD2_579_GDEY0579T93, GxEPD2_579_GDEY0579T93::HEIGHT>
 static const size_t MAX_ARRIVALS = 8;
 
 struct Arrivals {
-  time_t north[MAX_ARRIVALS];
+  time_t north[MAX_ARRIVALS]; // C train
   size_t northCount;
   time_t south[MAX_ARRIVALS];
   size_t southCount;
+  time_t aNorth[MAX_ARRIVALS]; // A train (late-night local fallback)
+  size_t aNorthCount;
+  time_t aSouth[MAX_ARRIVALS];
+  size_t aSouthCount;
   time_t busWest[MAX_ARRIVALS];
   size_t busWestCount;
   time_t busEast[MAX_ARRIVALS];
@@ -84,17 +91,24 @@ static bool stopTimeUpdateCb(pb_istream_t *stream, const pb_field_t *field,
 
   // trip (field 1) is serialized before stop_time_update (field 2),
   // so route_id is already populated when we get here
-  if (strcmp(ctx->tripUpdate->trip.route_id, ROUTE_ID) != 0) return true;
+  const char *route = ctx->tripUpdate->trip.route_id;
+  bool isPrimary = strcmp(route, ROUTE_PRIMARY) == 0;
+  bool isFallback = strcmp(route, ROUTE_FALLBACK) == 0;
+  if (!isPrimary && !isFallback) return true;
 
   time_t t = 0;
   if (stu.has_arrival && stu.arrival.has_time) t = stu.arrival.time;
   else if (stu.has_departure && stu.departure.has_time) t = stu.departure.time;
   if (t == 0) return true;
 
-  if (strcmp(stu.stop_id, STOP_NORTH) == 0)
-    addArrival(ctx->arrivals->north, &ctx->arrivals->northCount, t);
-  else if (strcmp(stu.stop_id, STOP_SOUTH) == 0)
-    addArrival(ctx->arrivals->south, &ctx->arrivals->southCount, t);
+  Arrivals *a = ctx->arrivals;
+  if (strcmp(stu.stop_id, STOP_NORTH) == 0) {
+    if (isPrimary) addArrival(a->north, &a->northCount, t);
+    else addArrival(a->aNorth, &a->aNorthCount, t);
+  } else if (strcmp(stu.stop_id, STOP_SOUTH) == 0) {
+    if (isPrimary) addArrival(a->south, &a->southCount, t);
+    else addArrival(a->aSouth, &a->aSouthCount, t);
+  }
   return true;
 }
 
@@ -262,17 +276,34 @@ static bool firstDraw = true;
 
 static char lastBusWestRow[48] = "";
 static char lastBusEastRow[48] = "";
+static const char *lastRoute = "";
 
 static void drawArrivals(const Arrivals &arrivals) {
+  // Show the C as long as any C trains are coming; when none are (late
+  // nights) fall back to the A, which only appears at this stop when it
+  // runs local
+  const char *route = ROUTE_PRIMARY;
+  const time_t *north = arrivals.north, *south = arrivals.south;
+  size_t northCount = arrivals.northCount, southCount = arrivals.southCount;
+  if (northCount + southCount == 0 &&
+      arrivals.aNorthCount + arrivals.aSouthCount > 0) {
+    route = ROUTE_FALLBACK;
+    north = arrivals.aNorth;
+    northCount = arrivals.aNorthCount;
+    south = arrivals.aSouth;
+    southCount = arrivals.aSouthCount;
+  }
+
   char northRow[48], southRow[48], busWestRow[48], busEastRow[48];
-  formatRow(northRow, sizeof(northRow), arrivals.north, arrivals.northCount);
-  formatRow(southRow, sizeof(southRow), arrivals.south, arrivals.southCount);
+  formatRow(northRow, sizeof(northRow), north, northCount);
+  formatRow(southRow, sizeof(southRow), south, southCount);
   formatRow(busWestRow, sizeof(busWestRow), arrivals.busWest,
             arrivals.busWestCount);
   formatRow(busEastRow, sizeof(busEastRow), arrivals.busEast,
             arrivals.busEastCount);
 
-  if (!firstDraw && strcmp(northRow, lastNorthRow) == 0 &&
+  if (!firstDraw && strcmp(route, lastRoute) == 0 &&
+      strcmp(northRow, lastNorthRow) == 0 &&
       strcmp(southRow, lastSouthRow) == 0 &&
       strcmp(busWestRow, lastBusWestRow) == 0 &&
       strcmp(busEastRow, lastBusEastRow) == 0)
@@ -282,13 +313,14 @@ static void drawArrivals(const Arrivals &arrivals) {
   strcpy(lastSouthRow, southRow);
   strcpy(lastBusWestRow, busWestRow);
   strcpy(lastBusEastRow, busEastRow);
+  lastRoute = route;
 
   if (firstDraw) display.setFullWindow();
   else display.setPartialWindow(0, 0, display.width(), display.height());
 
   display.firstPage();
   do {
-    renderArrivals(display, northRow, southRow, busWestRow, busEastRow);
+    renderArrivals(display, route, northRow, southRow, busWestRow, busEastRow);
   } while (display.nextPage());
 
   firstDraw = false;
@@ -376,10 +408,7 @@ void setup() {
 
   while (WiFi.status() != WL_CONNECTED) delay(500);
 
-  // WiFi.setSleep(false) is NOT allowed here: with BLE active the radio
-  // coexistence layer requires modem sleep, and disabling it aborts.
-  // WIFI_PS_MIN_MODEM (the default) is the lightest legal setting.
-  WiFi.setSleep(WIFI_PS_MIN_MODEM);
+  // WiFi.setSleep(WIFI_PS_MIN_MODEM);
   Serial.printf("connected: %s\n", WiFi.localIP().toString().c_str());
 
   // NTP so we can turn absolute arrival timestamps into minutes-away

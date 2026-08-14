@@ -337,6 +337,7 @@ struct HomeButton : Service::StatelessProgrammableSwitch {
 
 static void setupHomeKit() {
   homeSpan.setWifiCredentials(WIFI_SSID, WIFI_PASS);
+  homeSpan.enableOTA(); // espota, serviced by the poll task; default password
   homeSpan.begin(Category::ProgrammableSwitches, "Transit Display");
 
   new SpanAccessory();

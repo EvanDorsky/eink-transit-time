@@ -1,4 +1,4 @@
-.PHONY: build upload monitor fonts preview
+.PHONY: build flashusb ota monitor symbols fonts preview
 
 GFX_DIR = .pio/libdeps/crowpanel_epaper_579/Adafruit GFX Library
 NORTH ?= 3,8,15
@@ -9,8 +9,11 @@ BUSE ?= 4,31
 build:
 	pio run
 
-upload:
-	pio run -t upload
+flashusb:
+	pio run -e crowpanel_epaper_579 -t upload
+
+ota:
+	pio run -e crowpanel_ota -t upload
 
 monitor:
 	pio device monitor

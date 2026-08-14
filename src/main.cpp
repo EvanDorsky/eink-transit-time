@@ -375,9 +375,10 @@ void setup() {
 
   while (WiFi.status() != WL_CONNECTED) delay(500);
 
-  // Modem sleep makes the ESP32 miss mDNS multicast, so the home hub can
-  // take hours to rediscover us after a reboot; panel is mains-powered
-  WiFi.setSleep(false);
+  // WiFi.setSleep(false) is NOT allowed here: with BLE active the radio
+  // coexistence layer requires modem sleep, and disabling it aborts.
+  // WIFI_PS_MIN_MODEM (the default) is the lightest legal setting.
+  WiFi.setSleep(WIFI_PS_MIN_MODEM);
   Serial.printf("connected: %s\n", WiFi.localIP().toString().c_str());
 
   // NTP so we can turn absolute arrival timestamps into minutes-away

@@ -12,6 +12,14 @@
 #include "gtfs_realtime.pb.h"
 #include "secrets.h"
 
+// Log to both USB serial and HomeSpan's web log, viewable at
+// http://HomeSpan-110FDD4CD8EE.local/log (fmt string without trailing \n)
+#define LOGB(fmt, ...)                      \
+  do {                                      \
+    Serial.printf(fmt "\n", ##__VA_ARGS__); \
+    WEBLOG(fmt, ##__VA_ARGS__);             \
+  } while (0)
+
 // CrowPanel 5.79" pinout (dual-SSD1683 panel, GDEY0579T93)
 #define HOME_KEY 2
 #define EPD_POWER 7
@@ -129,7 +137,7 @@ static bool decodeFeed(const uint8_t *buf, size_t len, Arrivals *arrivals) {
   msg.entity.arg = arrivals;
   pb_istream_t stream = pb_istream_from_buffer(buf, len);
   if (!pb_decode(&stream, transit_realtime_FeedMessage_fields, &msg)) {
-    Serial.printf("pb_decode failed: %s\n", PB_GET_ERROR(&stream));
+    LOGB("pb_decode failed: %s", PB_GET_ERROR(&stream));
     return false;
   }
   return true;
@@ -175,7 +183,7 @@ static bool parseBusJson(const uint8_t *buf, size_t len, time_t *times,
   DeserializationError err =
       deserializeJson(doc, buf, len, DeserializationOption::NestingLimit(16));
   if (err) {
-    Serial.printf("bus json error: %s\n", err.c_str());
+    LOGB("bus json error: %s", err.c_str());
     return false;
   }
   JsonArray visits = doc["Siri"]["ServiceDelivery"]["StopMonitoringDelivery"]
@@ -222,7 +230,7 @@ static PsramSink feedSink;
 
 static bool fetchUrl(const char *url) {
   if (!feedSink.begin()) {
-    Serial.println("psram alloc failed");
+    LOGB("psram alloc failed");
     return false;
   }
   WiFiClientSecure client;
@@ -235,7 +243,7 @@ static bool fetchUrl(const char *url) {
   if (code == HTTP_CODE_OK) {
     ok = http.writeToStream(&feedSink) > 0;
   } else {
-    Serial.printf("http error: %d\n", code);
+    LOGB("http error: %d", code);
   }
   http.end();
   return ok;
@@ -353,7 +361,7 @@ struct HomeButton : Service::StatelessProgrammableSwitch {
   }
 
   void button(int pin, int pressType) override {
-    Serial.printf("button event: press type %d\n", pressType);
+    LOGB("button event: press type %d", pressType);
     // SpanButton press types match HAP event values (0/1/2)
     switchEvent->setVal(pressType);
   }
@@ -361,7 +369,7 @@ struct HomeButton : Service::StatelessProgrammableSwitch {
   void loop() override {
     while (pendingBlePresses.load() > 0) {
       pendingBlePresses--;
-      Serial.println("ble button event: single press");
+      LOGB("ble button event: single press");
       switchEvent->setVal(0); // HAP single press
     }
   }
@@ -370,6 +378,8 @@ struct HomeButton : Service::StatelessProgrammableSwitch {
 static void setupHomeKit() {
   homeSpan.setWifiCredentials(WIFI_SSID, WIFI_PASS);
   homeSpan.enableOTA(); // espota, serviced by the poll task; default password
+  // ring buffer of LOGB/WEBLOG entries at http://HomeSpan-110FDD4CD8EE.local/log
+  homeSpan.enableWebLog(200, "pool.ntp.org", "UTC", "log");
   homeSpan.begin(Category::ProgrammableSwitches, "Transit Display");
 
   new SpanAccessory();
@@ -409,7 +419,7 @@ void setup() {
   while (WiFi.status() != WL_CONNECTED) delay(500);
 
   // WiFi.setSleep(WIFI_PS_MIN_MODEM);
-  Serial.printf("connected: %s\n", WiFi.localIP().toString().c_str());
+  LOGB("connected: %s", WiFi.localIP().toString().c_str());
 
   // NTP so we can turn absolute arrival timestamps into minutes-away
   configTime(0, 0, "pool.ntp.org", "time.google.com");
@@ -446,6 +456,7 @@ void loop() {
     failures = 0;
     drawArrivals(arrivals);
   } else if (++failures >= 3) {
+    LOGB("feed unavailable (3 consecutive failures)");
     drawMessage("feed unavailable");
   }
 }

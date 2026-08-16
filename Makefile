@@ -25,6 +25,11 @@ symbols:
 fonts:
 	./scripts/gen_fonts.sh
 
+# live log stream from the device (UDP broadcast :5555); restart it if the
+# device reboots and the stream goes quiet
+udplog:
+	nc -klu 5555
+
 preview:
 	@mkdir -p host/build
 	c++ -O2 -std=c++17 -DARDUINO=100 -Ihost/shim -I"$(GFX_DIR)" -Iinclude \

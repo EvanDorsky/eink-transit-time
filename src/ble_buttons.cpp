@@ -14,8 +14,17 @@ static const char *BUTTON_SERVICE_UUID = "b6f5d0a0-6f21-4f2e-9e6b-1b7a3c5d9e10";
 // which dedups the ~15 copies of each burst.
 static std::function<void(const char *, uint32_t)> pressHandler;
 
-// peer address -> last seen press counter (only touched on the host task)
-static std::map<uint64_t, uint32_t> lastCounter;
+// peer address -> last seen press counter + when (only touched on the host
+// task). Dedup is time-boxed: the counter repeats within one ~2s burst, but
+// it can also legitimately repeat across boots (the button's RTC counter
+// resets on power loss or reset-button boots), so an identical counter seen
+// well after the burst ended is a new press, not a duplicate.
+struct Seen {
+  uint32_t count;
+  uint32_t ms;
+};
+static std::map<uint64_t, Seen> lastSeen;
+static const uint32_t BURST_DEDUP_MS = 10000;
 
 class ScanCallbacks : public NimBLEScanCallbacks {
   void onResult(const NimBLEAdvertisedDevice *dev) override {
@@ -29,10 +38,15 @@ class ScanCallbacks : public NimBLEScanCallbacks {
     memcpy(&count, mfg.data() + 2, 4);
 
     uint64_t key = uint64_t(dev->getAddress());
-    auto it = lastCounter.find(key);
-    if (it != lastCounter.end() && it->second == count) return; // same burst
+    uint32_t now = millis();
+    auto it = lastSeen.find(key);
+    if (it != lastSeen.end() && it->second.count == count &&
+        now - it->second.ms < BURST_DEDUP_MS) {
+      it->second.ms = now; // still the same burst
+      return;
+    }
 
-    lastCounter[key] = count;
+    lastSeen[key] = {count, now};
     if (pressHandler)
       pressHandler(dev->getAddress().toString().c_str(), count);
   }
@@ -43,6 +57,19 @@ class ScanCallbacks : public NimBLEScanCallbacks {
 };
 static ScanCallbacks scanCallbacks;
 
+// If a scan restart ever fails (e.g. momentary resource pressure), onScanEnd
+// won't fire again and listening would die silently — this watchdog revives it
+static void scanWatchdog(void *) {
+  for (;;) {
+    vTaskDelay(pdMS_TO_TICKS(5000));
+    NimBLEScan *scan = NimBLEDevice::getScan();
+    if (!scan->isScanning()) {
+      Serial.println("[ble] scan stopped, restarting");
+      scan->start(10000);
+    }
+  }
+}
+
 void bleButtonsBegin(std::function<void(const char *, uint32_t)> onPress) {
   pressHandler = onPress;
   NimBLEDevice::init("");
@@ -51,8 +78,11 @@ void bleButtonsBegin(std::function<void(const char *, uint32_t)> onPress) {
   scan->setScanCallbacks(&scanCallbacks, false);
   scan->setActiveScan(false);        // beacons don't do scan responses
   scan->setDuplicateFilter(false);   // repeat presses reuse the same packet
-  scan->setInterval(100);
-  scan->setWindow(60); // 60% duty: reliable catch, leaves airtime for WiFi
+  // 15% duty: WiFi/HomeKit needs the airtime under coex, and the button's
+  // 2s advertising burst gives us ~6 windows to catch at least one packet
+  scan->setInterval(300);
+  scan->setWindow(45);
   scan->start(10000);
+  xTaskCreate(scanWatchdog, "bleScanWdt", 2048, nullptr, 1, nullptr);
   Serial.println("[ble] listening for button beacons");
 }

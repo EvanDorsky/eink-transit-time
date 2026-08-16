@@ -5,20 +5,50 @@
 #include <GxEPD2_BW.h>
 #include <ArduinoJson.h>
 #include "HomeSpan.h"
+#include <WiFiUdp.h>
+#include <mutex>
+#include <mdns.h>
 #include "ble_buttons.h"
 #include <atomic>
+#include <vector>
+#include "lwip/tcpip.h"
+#include "lwip/priv/tcp_priv.h"
 #include "render.h"
 #include <pb_decode.h>
 #include "gtfs_realtime.pb.h"
 #include "secrets.h"
 
-// Log to both USB serial and HomeSpan's web log, viewable at
-// http://HomeSpan-110FDD4CD8EE.local/log (fmt string without trailing \n)
-#define LOGB(fmt, ...)                      \
-  do {                                      \
-    Serial.printf(fmt "\n", ##__VA_ARGS__); \
-    WEBLOG(fmt, ##__VA_ARGS__);             \
-  } while (0)
+// Log to USB serial, HomeSpan's web log (http://HomeSpan-110FDD4CD8EE.local/log),
+// and a live UDP broadcast on port 5555 — listen with `make udplog`.
+// fmt string without trailing \n.
+static const uint16_t LOG_UDP_PORT = 5555;
+
+// Safe to call from any task with WiFi up (loop task + HomeSpan poll task);
+// the mutex serializes use of the shared UDP socket
+static void udpLogLine(const char *line) {
+  static WiFiUDP udp;
+  static std::mutex udpMutex;
+  if (WiFi.status() != WL_CONNECTED) return;
+  std::lock_guard<std::mutex> lock(udpMutex);
+  udp.beginPacket(WiFi.broadcastIP(), LOG_UDP_PORT);
+  udp.write((const uint8_t *)line, strlen(line));
+  udp.write((const uint8_t *)"\n", 1);
+  udp.endPacket();
+}
+
+__attribute__((format(printf, 1, 2))) static void logLine(const char *fmt,
+                                                          ...) {
+  char buf[192];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  Serial.println(buf);
+  WEBLOG("%s", buf);
+  udpLogLine(buf);
+}
+
+#define LOGB(fmt, ...) logLine(fmt, ##__VA_ARGS__)
 
 // CrowPanel 5.79" pinout (dual-SSD1683 panel, GDEY0579T93)
 #define HOME_KEY 2
@@ -393,6 +423,78 @@ static void setupHomeKit() {
   homeSpan.autoPoll();
 }
 
+// ---------------- HAP session visibility ----------------
+
+// HomeSpan doesn't weblog controller connections, so we watch lwip's TCP
+// table ourselves: a client that holds a connection to the HAP port for 30s+
+// is a hub (or an open Home app) — browsers hitting the weblog churn through
+// short-lived connections and get filtered out by the threshold.
+
+static const int MAX_HAP_CONN = 12;
+static struct {
+  uint32_t ip[MAX_HAP_CONN];
+  uint16_t port[MAX_HAP_CONN];
+  int n;
+  volatile bool ready;
+} hapSnap;
+
+// Runs on the lwip thread via tcpip_callback: the pcb list may only be
+// safely walked there
+static void hapSnapshot(void *) {
+  hapSnap.n = 0;
+  for (struct tcp_pcb *p = tcp_active_pcbs; p && hapSnap.n < MAX_HAP_CONN;
+       p = p->next) {
+    if (p->local_port == 80 && p->state == ESTABLISHED) {
+      hapSnap.ip[hapSnap.n] = ip4_addr_get_u32(ip_2_ip4(&p->remote_ip));
+      hapSnap.port[hapSnap.n] = p->remote_port;
+      hapSnap.n++;
+    }
+  }
+  hapSnap.ready = true;
+}
+
+static void pollHapSessions() {
+  struct Known {
+    uint32_t ip;
+    uint16_t port;
+    uint32_t firstSeen;
+    bool logged, present;
+  };
+  static std::vector<Known> known;
+  static uint32_t lastPoll = 0;
+
+  if (millis() - lastPoll < 5000) return;
+  lastPoll = millis();
+
+  if (hapSnap.ready) {
+    hapSnap.ready = false;
+    for (auto &k : known) k.present = false;
+    for (int i = 0; i < hapSnap.n; i++) {
+      bool found = false;
+      for (auto &k : known)
+        if (k.ip == hapSnap.ip[i] && k.port == hapSnap.port[i])
+          k.present = found = true;
+      if (!found) known.push_back({hapSnap.ip[i], hapSnap.port[i], millis(),
+                                   false, true});
+    }
+    for (auto it = known.begin(); it != known.end();) {
+      if (!it->present) {
+        if (it->logged)
+          LOGB("hap session closed: %s", IPAddress(it->ip).toString().c_str());
+        it = known.erase(it);
+      } else {
+        if (!it->logged && millis() - it->firstSeen > 30000) {
+          it->logged = true;
+          LOGB("hap session established: %s (hub or Home app)",
+               IPAddress(it->ip).toString().c_str());
+        }
+        ++it;
+      }
+    }
+  }
+  tcpip_callback(hapSnapshot, nullptr);
+}
+
 // ---------------- setup / loop ----------------
 
 void setup() {
@@ -431,6 +533,19 @@ void loop() {
   static uint32_t lastFetch = 0;
   static int failures = 0;
 
+  pollHapSessions();
+
+  // Re-announce our HAP mDNS service every 30s. Under WiFi/BLE coexistence
+  // the radio misses a lot of multicast (modem sleep is mandatory with BT
+  // on), so the hub's queries and our boot announcements both get lost and
+  // the hub can take hours to reconnect after a reboot. Unsolicited
+  // announcements are TX-side and always get out. Re-setting a constant
+  // TXT item is HomeSpan's own broadcast mechanism (see HAP.cpp).
+  static uint32_t lastAnnounce = 0;
+  if (WiFi.status() == WL_CONNECTED && millis() - lastAnnounce > 30000) {
+    lastAnnounce = millis();
+    mdns_service_txt_item_set("_hap", "_tcp", "md", "HomeSpan-ESP32");
+  }
 
   if (lastFetch != 0 && millis() - lastFetch < REFRESH_MS) {
     delay(250);

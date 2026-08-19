@@ -139,12 +139,12 @@ void bleButtonsBegin(std::function<void(const char *, uint32_t)> onPress) {
   // requests — which also frees airtime for WiFi/HomeKit under BT/WiFi coex.
   scan->setActiveScan(false);
   scan->setDuplicateFilter(false); // repeat presses reuse the same packet
-  // 60% duty: the display is wall-powered, so scan hard — a ~2s burst is
-  // ~20 adverts and at 60% a full-burst miss is vanishingly rare. WiFi coex
-  // still preempts windows while TLS fetches are on the air; that (not the
-  // duty cycle) is the remaining cause of missed bursts.
+  // Continuous scan (window == interval): the display is wall-powered, so we
+  // request the radio full-time and let the WiFi/BLE coex arbiter take what
+  // WiFi actually needs. BLE gets every slot WiFi doesn't — the practical
+  // maximum on a shared radio.
   scan->setInterval(100);
-  scan->setWindow(60);
+  scan->setWindow(100);
   scan->start(10000);
   xTaskCreate(scanWatchdog, "bleScanWdt", 2048, nullptr, 1, nullptr);
   Serial.println("[ble] listening for button beacons");

@@ -76,7 +76,7 @@ static const char *BUS_URL_WEST = // downtown-bound
 static const char *BUS_URL_EAST =
     "https://bustime.mta.info/api/siri/stop-monitoring.json?key=" BUSTIME_API_KEY
     "&MonitoringRef=BUS_STOP_E&MaximumStopVisits=8";
-static const uint32_t REFRESH_MS = 15 * 1000;
+static const uint32_t REFRESH_MS = 20 * 1000;
 static const size_t FEED_BUF_CAP = 1024 * 1024;
 
 GxEPD2_BW<GxEPD2_579_GDEY0579T93, GxEPD2_579_GDEY0579T93::HEIGHT>
@@ -258,24 +258,49 @@ class PsramSink : public Stream {
 
 static PsramSink feedSink;
 
+// Persistent TLS sessions, one per host, so refresh cycles reuse the open
+// connection instead of paying a ~2s handshake per fetch — handshake airtime
+// under WiFi/BLE coex was starving the SP-1 scanner. A reused socket the
+// server closed while we were idle fails fast and gets one clean
+// reconnect+retry. Loop-task only; no locking needed.
+static WiFiClientSecure subwayTls, busTls;
+static HTTPClient subwayHttp, busHttp;
+
 static bool fetchUrl(const char *url) {
   if (!feedSink.begin()) {
     LOGB("psram alloc failed");
     return false;
   }
-  WiFiClientSecure client;
-  client.setInsecure(); // public read-only data; skip CA validation
-  HTTPClient http;
+  bool isBus = strstr(url, "bustime") != nullptr;
+  WiFiClientSecure &client = isBus ? busTls : subwayTls;
+  HTTPClient &http = isBus ? busHttp : subwayHttp;
+
+  static bool tlsInited = false;
+  if (!tlsInited) {
+    subwayTls.setInsecure(); // public read-only data; skip CA validation
+    busTls.setInsecure();
+    subwayHttp.setReuse(true);
+    busHttp.setReuse(true);
+    tlsInited = true;
+  }
+
   http.setTimeout(5000);
   if (!http.begin(client, url)) return false;
   int code = http.GET();
+  if (code < 0) { // stale keep-alive socket; reconnect once
+    LOGB("%s socket stale (%d), reconnecting", isBus ? "bus" : "subway", code);
+    http.end();
+    client.stop();
+    if (!http.begin(client, url)) return false;
+    code = http.GET();
+  }
   bool ok = false;
   if (code == HTTP_CODE_OK) {
     ok = http.writeToStream(&feedSink) > 0;
   } else {
     LOGB("http error: %d", code);
   }
-  http.end();
+  http.end(); // setReuse(true): connection stays open for the next cycle
   return ok;
 }
 
@@ -405,6 +430,106 @@ struct HomeButton : Service::StatelessProgrammableSwitch {
   }
 };
 
+// ---- SP-1 beacon remote -> HomeKit buttons ----
+//
+// Each SP-1 button maps to one of two HomeKit service types. Flip a button's
+// role by editing its entry in sp1Btns[] below — nothing else changes:
+//   SP1_STATELESS -> Service::StatelessProgrammableSwitch. Fires a single-press
+//     event; bind it in the Home app to any scene / accessory / automation.
+//   SP1_TOGGLE    -> Service::Switch. The ESP32 flips its On state on each
+//     press (a real toggle whose state lives here, so it never desyncs). Bind
+//     it to a light with a "when this switch turns on -> light on / turns off
+//     -> light off" automation for single-button on/off. (HomeKit accessories
+//     can't command each other, so that automation is the bridge to the light.)
+enum Sp1Role { SP1_STATELESS, SP1_TOGGLE };
+struct Sp1BtnCfg {
+  const char *name;
+  Sp1Role role;
+};
+
+// Index order MUST match the SP1_BTN_* bit positions in ble_buttons.h.
+static Sp1BtnCfg sp1Btns[SP1_BTN_COUNT] = {
+    {"SP1 Play", SP1_TOGGLE},
+    {"SP1 Track 1", SP1_TOGGLE},
+    {"SP1 Track 2", SP1_TOGGLE},
+    {"SP1 Track 3", SP1_TOGGLE},
+    {"SP1 Track 4", SP1_TOGGLE},
+    {"SP1 Vol +", SP1_TOGGLE},
+    {"SP1 Vol -", SP1_TOGGLE},
+    {"SP1 FWD", SP1_TOGGLE},
+    {"SP1 RWD", SP1_TOGGLE},
+};
+
+// Set by the NimBLE host task (bleSp1Begin callback), drained by each button
+// service's loop() on the HomeSpan poll task. bit i = SP1_BTN_i pressed.
+static std::atomic<uint16_t> pendingSp1Press{0};
+
+struct Sp1StatelessButton : Service::StatelessProgrammableSwitch {
+  SpanCharacteristic *ev;
+  uint16_t bit;
+  const char *name;
+  Sp1StatelessButton(int idx, int labelIndex)
+      : Service::StatelessProgrammableSwitch() {
+    bit = (uint16_t)(1u << idx);
+    name = sp1Btns[idx].name;
+    ev = new Characteristic::ProgrammableSwitchEvent();
+    new Characteristic::ServiceLabelIndex(labelIndex);
+    new Characteristic::Name(name);
+  }
+  void loop() override {
+    if (pendingSp1Press.fetch_and((uint16_t)~bit) & bit) {
+      LOGB("sp1 %s: single press", name);
+      ev->setVal(0); // HAP single press
+    }
+  }
+};
+
+struct Sp1ToggleButton : Service::Switch {
+  SpanCharacteristic *on;
+  uint16_t bit;
+  const char *name;
+  Sp1ToggleButton(int idx) : Service::Switch() {
+    bit = (uint16_t)(1u << idx);
+    name = sp1Btns[idx].name;
+    on = new Characteristic::On();
+    new Characteristic::Name(name);
+  }
+  void loop() override {
+    if (pendingSp1Press.fetch_and((uint16_t)~bit) & bit) {
+      bool v = !on->getVal();
+      on->setVal(v);
+      LOGB("sp1 %s: toggle -> %s", name, v ? "on" : "off");
+    }
+  }
+};
+
+// A dedicated bridged accessory holding the 9 SP-1 buttons, kept separate from
+// the panel's menu button so existing automations stay untouched.
+static void setupSp1Remote() {
+  new SpanAccessory();
+  new Service::AccessoryInformation();
+  new Characteristic::Identify();
+  new Characteristic::Name("SP-1 Remote");
+
+  int statelessCount = 0;
+  for (int i = 0; i < SP1_BTN_COUNT; i++)
+    if (sp1Btns[i].role == SP1_STATELESS) statelessCount++;
+
+  // A ServiceLabel groups the stateless switches so the Home app numbers them.
+  if (statelessCount > 0) {
+    new Service::ServiceLabel();
+    new Characteristic::ServiceLabelNamespace(1); // 1 = arabic numerals
+  }
+
+  int labelIndex = 1;
+  for (int i = 0; i < SP1_BTN_COUNT; i++) {
+    if (sp1Btns[i].role == SP1_TOGGLE)
+      new Sp1ToggleButton(i);
+    else
+      new Sp1StatelessButton(i, labelIndex++);
+  }
+}
+
 static void setupHomeKit() {
   homeSpan.setWifiCredentials(WIFI_SSID, WIFI_PASS);
   homeSpan.enableOTA(); // espota, serviced by the poll task; default password
@@ -417,6 +542,9 @@ static void setupHomeKit() {
   new Characteristic::Identify();
   new Characteristic::Name("Transit Button");
   new HomeButton(HOME_KEY);
+
+  // Second bridged accessory: the SP-1 remote's buttons.
+  setupSp1Remote();
 
   // HAP gets serviced on its own FreeRTOS task, so the blocking
   // fetch/render loop below never makes HomeKit "Not Responding"
@@ -513,6 +641,15 @@ void setup() {
   // HomeSpan owns WiFi (credentials, connection, reconnection)
   setupHomeKit();
 
+  // SP-1 remote: decode each new state and flag the newly-pressed buttons for
+  // their per-button services to act on (poll task). `released` is available
+  // for future hold/long-press mapping; unused for now.
+  bleSp1Begin([](const Sp1State &st, uint16_t pressed, uint16_t released) {
+    (void)released;
+    Serial.printf("[sp1] seq=%u btn=0x%03x pressed=0x%03x batt=%u\n", st.seq,
+                  st.buttons, pressed, st.battery); // serial-only: NimBLE task
+    if (pressed) pendingSp1Press.fetch_or(pressed);
+  });
   bleButtonsBegin([](const char *addr, uint32_t count) {
     Serial.printf("[ble] press #%lu from %s\n", (unsigned long)count, addr);
     pendingBlePresses++;

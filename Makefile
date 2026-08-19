@@ -25,10 +25,9 @@ symbols:
 fonts:
 	./scripts/gen_fonts.sh
 
-# live log stream from the device (UDP broadcast :5555); restart it if the
-# device reboots and the stream goes quiet
+# live log stream from the device (UDP broadcast :5555)
 udplog:
-	nc -klu 5555
+	./scripts/udplog.py
 
 preview:
 	@mkdir -p host/build

@@ -4,24 +4,19 @@
 #include <HTTPClient.h>
 #include <GxEPD2_BW.h>
 #include <ArduinoJson.h>
-#include "HomeSpan.h"
+#include <ArduinoOTA.h>
 #include <WiFiUdp.h>
 #include <mutex>
-#include <mdns.h>
-#include <vector>
-#include "lwip/tcpip.h"
-#include "lwip/priv/tcp_priv.h"
 #include "render.h"
 #include <pb_decode.h>
 #include "gtfs_realtime.pb.h"
 #include "secrets.h"
 
-// Log to USB serial, HomeSpan's web log (http://HomeSpan-110FDD4CD8EE.local/log),
-// and a live UDP broadcast on port 5555 — listen with `make udplog`.
-// fmt string without trailing \n.
+// Log to USB serial and a live UDP broadcast on port 5555 — listen with
+// `make udplog`. fmt string without trailing \n.
 static const uint16_t LOG_UDP_PORT = 5555;
 
-// Safe to call from any task with WiFi up (loop task + HomeSpan poll task);
+// Safe to call from any task with WiFi up (loop task + OTA task);
 // the mutex serializes use of the shared UDP socket
 static void udpLogLine(const char *line) {
   static WiFiUDP udp;
@@ -42,7 +37,6 @@ __attribute__((format(printf, 1, 2))) static void logLine(const char *fmt,
   vsnprintf(buf, sizeof(buf), fmt, ap);
   va_end(ap);
   Serial.println(buf);
-  WEBLOG("%s", buf);
   udpLogLine(buf);
 }
 
@@ -395,114 +389,35 @@ static void drawMessage(const char *msg) {
   // firstDraw = true; // next data draw does a clean full refresh
 }
 
-// ---------------- HomeKit (HomeSpan) ----------------
+// ---------------- OTA (ArduinoOTA / espota) ----------------
 
-// Stateless programmable switch on the panel's menu key: publishes
-// single/double/long press events for HomeKit automations to bind to
-struct HomeButton : Service::StatelessProgrammableSwitch {
-  SpanCharacteristic *switchEvent;
+static const char *OTA_HOSTNAME = "transit-display";
+static const char *OTA_PASSWORD = "transit-ota"; // matches --auth in platformio.ini
 
-  HomeButton(int pin) : Service::StatelessProgrammableSwitch() {
-    switchEvent = new Characteristic::ProgrammableSwitchEvent();
-    new SpanButton(pin);
+// Pauses the fetch/draw loop while an update streams in
+static volatile bool otaInProgress = false;
+
+// OTA serviced on its own task so a blocking fetch never stalls an update
+static void otaTask(void *) {
+  for (;;) {
+    ArduinoOTA.handle();
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
-
-  void button(int pin, int pressType) override {
-    LOGB("button event: press type %d", pressType);
-    // SpanButton press types match HAP event values (0/1/2)
-    switchEvent->setVal(pressType);
-  }
-};
-
-
-static void setupHomeKit() {
-  homeSpan.setWifiCredentials(WIFI_SSID, WIFI_PASS);
-  homeSpan.enableOTA(); // espota, serviced by the poll task; default password
-  // ring buffer of LOGB/WEBLOG entries at http://HomeSpan-110FDD4CD8EE.local/log
-  homeSpan.enableWebLog(200, "pool.ntp.org", "UTC", "log");
-  homeSpan.begin(Category::ProgrammableSwitches, "Transit Display");
-
-  new SpanAccessory();
-  new Service::AccessoryInformation();
-  new Characteristic::Identify();
-  new Characteristic::Name("Transit Button");
-  new HomeButton(HOME_KEY);
-
-  // HAP gets serviced on its own FreeRTOS task, so the blocking
-  // fetch/render loop below never makes HomeKit "Not Responding"
-  homeSpan.autoPoll();
 }
 
-// ---------------- HAP session visibility ----------------
-
-// HomeSpan doesn't weblog controller connections, so we watch lwip's TCP
-// table ourselves: a client that holds a connection to the HAP port for 30s+
-// is a hub (or an open Home app) — browsers hitting the weblog churn through
-// short-lived connections and get filtered out by the threshold.
-
-static const int MAX_HAP_CONN = 12;
-static struct {
-  uint32_t ip[MAX_HAP_CONN];
-  uint16_t port[MAX_HAP_CONN];
-  int n;
-  volatile bool ready;
-} hapSnap;
-
-// Runs on the lwip thread via tcpip_callback: the pcb list may only be
-// safely walked there
-static void hapSnapshot(void *) {
-  hapSnap.n = 0;
-  for (struct tcp_pcb *p = tcp_active_pcbs; p && hapSnap.n < MAX_HAP_CONN;
-       p = p->next) {
-    if (p->local_port == 80 && p->state == ESTABLISHED) {
-      hapSnap.ip[hapSnap.n] = ip4_addr_get_u32(ip_2_ip4(&p->remote_ip));
-      hapSnap.port[hapSnap.n] = p->remote_port;
-      hapSnap.n++;
-    }
-  }
-  hapSnap.ready = true;
-}
-
-static void pollHapSessions() {
-  struct Known {
-    uint32_t ip;
-    uint16_t port;
-    uint32_t firstSeen;
-    bool logged, present;
-  };
-  static std::vector<Known> known;
-  static uint32_t lastPoll = 0;
-
-  if (millis() - lastPoll < 5000) return;
-  lastPoll = millis();
-
-  if (hapSnap.ready) {
-    hapSnap.ready = false;
-    for (auto &k : known) k.present = false;
-    for (int i = 0; i < hapSnap.n; i++) {
-      bool found = false;
-      for (auto &k : known)
-        if (k.ip == hapSnap.ip[i] && k.port == hapSnap.port[i])
-          k.present = found = true;
-      if (!found) known.push_back({hapSnap.ip[i], hapSnap.port[i], millis(),
-                                   false, true});
-    }
-    for (auto it = known.begin(); it != known.end();) {
-      if (!it->present) {
-        if (it->logged)
-          LOGB("hap session closed: %s", IPAddress(it->ip).toString().c_str());
-        it = known.erase(it);
-      } else {
-        if (!it->logged && millis() - it->firstSeen > 30000) {
-          it->logged = true;
-          LOGB("hap session established: %s (hub or Home app)",
-               IPAddress(it->ip).toString().c_str());
-        }
-        ++it;
-      }
-    }
-  }
-  tcpip_callback(hapSnapshot, nullptr);
+static void setupOta() {
+  ArduinoOTA.setHostname(OTA_HOSTNAME);
+  ArduinoOTA.setPassword(OTA_PASSWORD);
+  ArduinoOTA.onStart([]() {
+    otaInProgress = true;
+    LOGB("ota update starting");
+  });
+  ArduinoOTA.onError([](ota_error_t e) {
+    otaInProgress = false;
+    LOGB("ota error %d", (int)e);
+  });
+  ArduinoOTA.begin(); // also brings up mDNS as transit-display.local
+  xTaskCreate(otaTask, "ota", 8192, nullptr, 1, nullptr);
 }
 
 // ---------------- setup / loop ----------------
@@ -520,16 +435,18 @@ void setup() {
 
   drawMessage("connecting...");
 
-  // HomeSpan owns WiFi (credentials, connection, reconnection)
-  setupHomeKit();
-
-
+  WiFi.mode(WIFI_STA);
+  WiFi.setHostname(OTA_HOSTNAME);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  WiFi.setAutoReconnect(true);
   while (WiFi.status() != WL_CONNECTED) delay(500);
 
-  // With BLE gone there's no coex constraint: disable modem sleep for
-  // reliable multicast RX and snappier HomeKit/fetch latency
+  // Wall-powered, no BLE coex: modem sleep off for reliable multicast RX
+  // (mDNS/OTA discovery) and lower fetch latency
   WiFi.setSleep(false);
   LOGB("connected: %s", WiFi.localIP().toString().c_str());
+
+  setupOta();
 
   // NTP so we can turn absolute arrival timestamps into minutes-away
   configTime(0, 0, "pool.ntp.org", "time.google.com");
@@ -541,16 +458,9 @@ void loop() {
   static uint32_t lastFetch = 0;
   static int failures = 0;
 
-  pollHapSessions();
-
-  // Re-announce our HAP mDNS service every 30s. Kept from the BLE-coex era
-  // (multicast RX is reliable now that modem sleep is off), but it stays as
-  // cheap insurance against lost announcements after reboots. Re-setting a
-  // constant TXT item is HomeSpan's own broadcast mechanism (see HAP.cpp).
-  static uint32_t lastAnnounce = 0;
-  if (WiFi.status() == WL_CONNECTED && millis() - lastAnnounce > 30000) {
-    lastAnnounce = millis();
-    mdns_service_txt_item_set("_hap", "_tcp", "md", "HomeSpan-ESP32");
+  if (otaInProgress) { // let the update own the flash and the radio
+    delay(100);
+    return;
   }
 
   if (lastFetch != 0 && millis() - lastFetch < REFRESH_MS) {
@@ -559,7 +469,7 @@ void loop() {
   }
   lastFetch = millis();
 
-  if (WiFi.status() != WL_CONNECTED) return; // HomeSpan handles reconnection
+  if (WiFi.status() != WL_CONNECTED) return; // core auto-reconnects
 
   Arrivals arrivals;
   memset(&arrivals, 0, sizeof(arrivals));

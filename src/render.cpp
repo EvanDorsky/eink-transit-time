@@ -1,4 +1,5 @@
 #include "render.h"
+#include "fonts/HelveticaBold11pt7b.h"
 #include "fonts/HelveticaBold14pt7b.h"
 #include "fonts/HelveticaBold20pt7b.h"
 #include "fonts/HelveticaBold22pt7b.h"
@@ -25,6 +26,25 @@ static void drawRouteBullet(Adafruit_GFX &gfx, const char *letter, int16_t cx,
   gfx.getTextBounds(letter, 0, 0, &tbx, &tby, &tbw, &tbh);
   gfx.setCursor(cx - tbw / 2 - tbx, cy - tbh / 2 - tby);
   gfx.print(letter);
+  gfx.setTextColor(K_BLACK);
+}
+
+// Bus route badge: filled rounded rect matching the route bullet's visual
+// weight, both route names stacked and knocked out in white
+static void drawBusBadge(Adafruit_GFX &gfx, int16_t cx, int16_t cy) {
+  const int16_t w = 60, h = 52, r = 10;
+  gfx.fillRoundRect(cx - w / 2, cy - h / 2, w, h, r, K_BLACK);
+  gfx.setFont(&HelveticaBold11pt7b);
+  gfx.setTextColor(K_WHITE);
+  const char *lines[2] = {"B25", "B26"};
+  const int16_t centers[2] = {(int16_t)(cy - 12), (int16_t)(cy + 12)};
+  for (int i = 0; i < 2; i++) {
+    int16_t tbx, tby;
+    uint16_t tbw, tbh;
+    gfx.getTextBounds(lines[i], 0, 0, &tbx, &tby, &tbw, &tbh);
+    gfx.setCursor(cx - tbw / 2 - tbx, centers[i] - tbh / 2 - tby);
+    gfx.print(lines[i]);
+  }
   gfx.setTextColor(K_BLACK);
 }
 
@@ -63,10 +83,14 @@ void renderArrivals(Adafruit_GFX &gfx, const char *routeLetter,
   drawRouteBullet(gfx, routeLetter, 42, ROW_BASELINES[0] - 18, 26);
   drawRouteBullet(gfx, routeLetter, 42, ROW_BASELINES[1] - 18, 26);
 
+  // bus rows carry the shared B25/B26 badge in the same column
+  drawBusBadge(gfx, 42, ROW_BASELINES[2] - 18);
+  drawBusBadge(gfx, 42, ROW_BASELINES[3] - 18);
+
   printArrivalRow(gfx, "Manhattan", northRow, ROW_BASELINES[0]);
   printArrivalRow(gfx, "Euclid", southRow, ROW_BASELINES[1]);
-  printArrivalRow(gfx, "B25/26 Dtwn", busWestRow, ROW_BASELINES[2]);
-  printArrivalRow(gfx, "B25/26 East", busEastRow, ROW_BASELINES[3]);
+  printArrivalRow(gfx, "Downtown", busWestRow, ROW_BASELINES[2]);
+  printArrivalRow(gfx, "Eastbound", busEastRow, ROW_BASELINES[3]);
 }
 
 void renderMessage(Adafruit_GFX &gfx, const char *msg) {

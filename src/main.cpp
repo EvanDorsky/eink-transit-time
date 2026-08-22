@@ -11,6 +11,8 @@
 #include <pb_decode.h>
 #include "gtfs_realtime.pb.h"
 #include "secrets.h"
+#include "log.h"
+#include "mqtt.h"
 
 // Log to USB serial and a live UDP broadcast on port 5555 — listen with
 // `make udplog`. fmt string without trailing \n.
@@ -29,8 +31,7 @@ static void udpLogLine(const char *line) {
   udp.endPacket();
 }
 
-__attribute__((format(printf, 1, 2))) static void logLine(const char *fmt,
-                                                          ...) {
+__attribute__((format(printf, 1, 2))) void logLine(const char *fmt, ...) {
   char buf[192];
   va_list ap;
   va_start(ap, fmt);
@@ -39,8 +40,6 @@ __attribute__((format(printf, 1, 2))) static void logLine(const char *fmt,
   Serial.println(buf);
   udpLogLine(buf);
 }
-
-#define LOGB(fmt, ...) logLine(fmt, ##__VA_ARGS__)
 
 // CrowPanel 5.79" pinout (dual-SSD1683 panel, GDEY0579T93)
 #define HOME_KEY 2
@@ -356,6 +355,10 @@ static void drawArrivals(const Arrivals &arrivals) {
   formatRow(busEastRow, sizeof(busEastRow), arrivals.busEast,
             arrivals.busEastCount);
 
+  // Every successful cycle, even when the panel doesn't redraw — HA sensors
+  // should stay fresh regardless
+  mqttPublishState(route, northRow, southRow, busWestRow, busEastRow);
+
   if (!firstDraw && strcmp(route, lastRoute) == 0 &&
       strcmp(northRow, lastNorthRow) == 0 &&
       strcmp(southRow, lastSouthRow) == 0 &&
@@ -447,6 +450,7 @@ void setup() {
   LOGB("connected: %s", WiFi.localIP().toString().c_str());
 
   setupOta();
+  mqttSetup();
 
   // NTP so we can turn absolute arrival timestamps into minutes-away
   configTime(0, 0, "pool.ntp.org", "time.google.com");
@@ -462,6 +466,8 @@ void loop() {
     delay(100);
     return;
   }
+
+  mqttLoop(); // cheap; keeps the broker connection alive between fetches
 
   if (lastFetch != 0 && millis() - lastFetch < REFRESH_MS) {
     delay(250);

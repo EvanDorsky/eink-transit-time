@@ -2,6 +2,7 @@
 // the exact same render.cpp + font bitmaps as the firmware, writes a PGM.
 //   preview [north] [south] [bus-west] [bus-east] [route-letter] [out.pgm]
 //   preview --message "text" [out.pgm]
+//   preview --commute MINUTES [ROUTE] [out.pgm]
 #include <stdio.h>
 #include <string.h>
 #include <Adafruit_GFX.h>
@@ -16,6 +17,11 @@ int main(int argc, char **argv) {
   if (argc >= 3 && strcmp(argv[1], "--message") == 0) {
     renderMessage(canvas, argv[2]);
     if (argc > 3) out = argv[3];
+  } else if (argc >= 3 && strcmp(argv[1], "--commute") == 0) {
+    // preview --commute MINUTES [ROUTE] [out.pgm]
+    const char *route = argc > 3 ? argv[3] : "C";
+    renderCommute(canvas, route, argv[2]);
+    if (argc > 4) out = argv[4];
   } else {
     const char *north = argc > 1 ? argv[1] : "3,8,15";
     const char *south = argc > 2 ? argv[2] : "5,12";

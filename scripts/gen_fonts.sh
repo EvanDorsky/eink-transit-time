@@ -17,3 +17,16 @@ for size in 11 14 20 22 26 32; do
     "$BIN" Helvetica.ttc "$size" > "$OUT_DIR/HelveticaBold${size}pt7b.h"
   echo "generated $OUT_DIR/HelveticaBold${size}pt7b.h"
 done
+
+# Commute-mode display font: chars 32-67 only (space..C — digits, comma,
+# dash, route letters). 64pt is the ceiling — GFXglyph yOffset is int8_t,
+# so glyphs taller than ~128px overflow; renderCommute scales 2x instead.
+FONTCONVERT_FACE=1 FONTCONVERT_NAME=HelveticaBold \
+  "$BIN" Helvetica.ttc 64 32 67 > "$OUT_DIR/HelveticaBold64pt7b.h"
+echo "generated $OUT_DIR/HelveticaBold64pt7b.h"
+
+# Commute bullet letter: route letters only (A-C) at 85pt, the largest
+# glyph that still fits a GFXfont's int8_t offsets
+FONTCONVERT_FACE=1 FONTCONVERT_NAME=HelveticaBold \
+  "$BIN" Helvetica.ttc 85 65 67 > "$OUT_DIR/HelveticaBold85pt7b.h"
+echo "generated $OUT_DIR/HelveticaBold85pt7b.h"

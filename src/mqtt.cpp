@@ -1,6 +1,8 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <PubSubClient.h>
+#include <ArduinoJson.h>
+#include <Preferences.h>
 #include "mqtt.h"
 #include "log.h"
 #include "secrets.h"
@@ -14,9 +16,83 @@ static const char *CLIENT_ID = "transit-display";
 static const char *TOPIC_AVAIL = "transit-display/availability";
 static const char *TOPIC_STATE = "transit-display/state";
 
+// Commute-mode config topics (see mqtt.h for the contract)
+static const char *TOPIC_COMMUTE_STATE = "transit-display/commute/state";
+static const char *TOPIC_COMMUTE_SET_ENABLED = "transit-display/commute/enabled/set";
+static const char *TOPIC_COMMUTE_SET_START = "transit-display/commute/start/set";
+static const char *TOPIC_COMMUTE_SET_END = "transit-display/commute/end/set";
+static const char *TOPIC_COMMUTE_SET_JSON = "transit-display/commute/set";
+
 static WiFiClient mqttNet;
 static PubSubClient mqtt(mqttNet);
 static IPAddress brokerIp;
+
+// Defaults: weekday mornings 7-10am (Sun=bit0..Sat=bit6, Mon-Fri = 0x3E)
+static CommuteConfig commuteCfg = {true, 7, 10, 0x3E};
+static Preferences commutePrefs; // NVS namespace kept open for saves
+
+CommuteConfig mqttGetCommuteConfig() { return commuteCfg; }
+
+static void saveCommuteCfg() {
+  commutePrefs.putBool("en", commuteCfg.enabled);
+  commutePrefs.putUChar("start", commuteCfg.startHour);
+  commutePrefs.putUChar("end", commuteCfg.endHour);
+  commutePrefs.putUChar("days", commuteCfg.daysMask);
+}
+
+static void loadCommuteCfg() {
+  commutePrefs.begin("commute", false);
+  commuteCfg.enabled = commutePrefs.getBool("en", commuteCfg.enabled);
+  commuteCfg.startHour = commutePrefs.getUChar("start", commuteCfg.startHour);
+  commuteCfg.endHour = commutePrefs.getUChar("end", commuteCfg.endHour);
+  commuteCfg.daysMask = commutePrefs.getUChar("days", commuteCfg.daysMask);
+}
+
+static void publishCommuteState() {
+  char payload[128];
+  snprintf(payload, sizeof(payload),
+           "{\"enabled\":%s,\"start\":%u,\"end\":%u,\"days\":%u}",
+           commuteCfg.enabled ? "true" : "false", commuteCfg.startHour,
+           commuteCfg.endHour, commuteCfg.daysMask);
+  mqtt.publish(TOPIC_COMMUTE_STATE, payload, true);
+}
+
+static uint8_t clampHour(long v) {
+  if (v < 0) return 0;
+  if (v > 23) return 23;
+  return (uint8_t)v;
+}
+
+static void mqttCallback(char *topic, byte *payload, unsigned int len) {
+  char buf[160];
+  if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+  memcpy(buf, payload, len);
+  buf[len] = '\0';
+
+  if (strcmp(topic, TOPIC_COMMUTE_SET_ENABLED) == 0) {
+    commuteCfg.enabled = strcasecmp(buf, "ON") == 0 || strcmp(buf, "1") == 0;
+  } else if (strcmp(topic, TOPIC_COMMUTE_SET_START) == 0) {
+    commuteCfg.startHour = clampHour(strtol(buf, nullptr, 10));
+  } else if (strcmp(topic, TOPIC_COMMUTE_SET_END) == 0) {
+    commuteCfg.endHour = clampHour(strtol(buf, nullptr, 10));
+  } else if (strcmp(topic, TOPIC_COMMUTE_SET_JSON) == 0) {
+    JsonDocument doc;
+    if (deserializeJson(doc, buf)) {
+      LOGB("commute: bad json ignored");
+      return;
+    }
+    if (doc["enabled"].is<bool>()) commuteCfg.enabled = doc["enabled"];
+    if (doc["start"].is<long>()) commuteCfg.startHour = clampHour(doc["start"]);
+    if (doc["end"].is<long>()) commuteCfg.endHour = clampHour(doc["end"]);
+    if (doc["days"].is<long>()) commuteCfg.daysMask = (uint8_t)(doc["days"].as<long>() & 0x7F);
+  } else {
+    return;
+  }
+  saveCommuteCfg();
+  publishCommuteState();
+  LOGB("commute: enabled=%d window=%u-%u days=0x%02x", commuteCfg.enabled,
+       commuteCfg.startHour, commuteCfg.endHour, commuteCfg.daysMask);
+}
 
 // One retained discovery config per sensor, published on every (re)connect.
 // Keys are HA MQTT-discovery abbreviations to keep payloads small.
@@ -41,6 +117,12 @@ static const SensorDef SENSORS[] = {
     {"route", "Active route", "{{ value_json.route }}", nullptr},
 };
 
+// Shared device block so all entities group under one HA device
+static const char *DEV_BLOCK =
+    "\"dev\":{\"ids\":[\"transit-display\"],"
+    "\"name\":\"Transit Display\",\"mf\":\"DIY\","
+    "\"mdl\":\"CrowPanel 5.79 e-ink\"}";
+
 static void publishDiscovery() {
   for (const SensorDef &s : SENSORS) {
     char topic[96];
@@ -56,10 +138,40 @@ static void publishDiscovery() {
     if (s.unit)
       pos += snprintf(payload + pos, sizeof(payload) - pos,
                       "\"unit_of_meas\":\"%s\",", s.unit);
-    snprintf(payload + pos, sizeof(payload) - pos,
-             "\"dev\":{\"ids\":[\"transit-display\"],"
-             "\"name\":\"Transit Display\",\"mf\":\"DIY\","
-             "\"mdl\":\"CrowPanel 5.79 e-ink\"}}");
+    snprintf(payload + pos, sizeof(payload) - pos, "%s}", DEV_BLOCK);
+    mqtt.publish(topic, payload, true);
+  }
+
+  // Commute mode controls: one switch + two hour numbers
+  char payload[640];
+  snprintf(payload, sizeof(payload),
+           "{\"uniq_id\":\"transit_display_commute_enabled\","
+           "\"name\":\"Commute mode\",\"icon\":\"mdi:train\","
+           "\"stat_t\":\"%s\","
+           "\"val_tpl\":\"{{ 'ON' if value_json.enabled else 'OFF' }}\","
+           "\"cmd_t\":\"%s\",\"avty_t\":\"%s\",%s}",
+           TOPIC_COMMUTE_STATE, TOPIC_COMMUTE_SET_ENABLED, TOPIC_AVAIL,
+           DEV_BLOCK);
+  mqtt.publish("homeassistant/switch/transit_display/commute_enabled/config",
+               payload, true);
+
+  struct { const char *key, *name, *tpl, *cmd; } nums[] = {
+      {"commute_start", "Commute start hour", "{{ value_json.start }}",
+       TOPIC_COMMUTE_SET_START},
+      {"commute_end", "Commute end hour", "{{ value_json.end }}",
+       TOPIC_COMMUTE_SET_END},
+  };
+  for (auto &n : nums) {
+    char topic[96];
+    snprintf(topic, sizeof(topic),
+             "homeassistant/number/transit_display/%s/config", n.key);
+    snprintf(payload, sizeof(payload),
+             "{\"uniq_id\":\"transit_display_%s\",\"name\":\"%s\","
+             "\"stat_t\":\"%s\",\"val_tpl\":\"%s\",\"cmd_t\":\"%s\","
+             "\"min\":0,\"max\":23,\"step\":1,\"icon\":\"mdi:clock-outline\","
+             "\"avty_t\":\"%s\",%s}",
+             n.key, n.name, TOPIC_COMMUTE_STATE, n.tpl, n.cmd, TOPIC_AVAIL,
+             DEV_BLOCK);
     mqtt.publish(topic, payload, true);
   }
 }
@@ -87,7 +199,12 @@ static bool mqttConnect() {
     return false;
   }
   mqtt.publish(TOPIC_AVAIL, "online", true);
+  mqtt.subscribe(TOPIC_COMMUTE_SET_ENABLED);
+  mqtt.subscribe(TOPIC_COMMUTE_SET_START);
+  mqtt.subscribe(TOPIC_COMMUTE_SET_END);
+  mqtt.subscribe(TOPIC_COMMUTE_SET_JSON);
   publishDiscovery();
+  publishCommuteState();
   LOGB("mqtt: connected");
   return true;
 }
@@ -95,6 +212,8 @@ static bool mqttConnect() {
 void mqttSetup() {
   // Discovery payloads exceed PubSubClient's 256-byte default
   mqtt.setBufferSize(1024);
+  mqtt.setCallback(mqttCallback);
+  loadCommuteCfg();
 }
 
 void mqttLoop() {

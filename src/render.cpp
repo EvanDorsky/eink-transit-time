@@ -4,6 +4,8 @@
 #include "fonts/HelveticaBold20pt7b.h"
 #include "fonts/HelveticaBold22pt7b.h"
 #include "fonts/HelveticaBold26pt7b.h"
+#include "fonts/HelveticaBold64pt7b.h"
+#include "fonts/HelveticaBold85pt7b.h"
 
 // Same values as GxEPD_BLACK / GxEPD_WHITE, redefined here so this file
 // compiles on the host without GxEPD2
@@ -99,4 +101,45 @@ void renderMessage(Adafruit_GFX &gfx, const char *msg) {
   gfx.setFont(&HelveticaBold26pt7b);
   gfx.setCursor(14, 140);
   gfx.print(msg);
+}
+
+// Commute mode: nothing but a giant route bullet and the minutes until the
+// next three trains ("7,12,19"), sized for the 792x272 panel. The 64pt face
+// is the biggest a GFXfont can hold (int8_t glyph offsets); at 1x the worst
+// case "22,28,34" still fits beside the bullet.
+void renderCommute(Adafruit_GFX &gfx, const char *routeLetter,
+                   const char *minutesText) {
+  gfx.fillScreen(K_WHITE);
+  gfx.setTextColor(K_BLACK);
+
+  const int16_t cy = gfx.height() / 2; // 136
+  // r=105 keeps the 85pt letter at the same ~0.60 letter/disc height
+  // ratio as the small arrival-row bullets
+  const int16_t bulletR = 105;
+  const int16_t bulletCx = 20 + bulletR;
+
+  // route bullet at nearly full panel height, letter knocked out in white
+  gfx.fillCircle(bulletCx, cy, bulletR, K_BLACK);
+  gfx.setFont(&HelveticaBold85pt7b);
+  gfx.setTextColor(K_WHITE);
+  int16_t tbx, tby;
+  uint16_t tbw, tbh;
+  gfx.getTextBounds(routeLetter, 0, 0, &tbx, &tby, &tbw, &tbh);
+  gfx.setCursor(bulletCx - tbw / 2 - tbx, cy - tbh / 2 - tby);
+  gfx.print(routeLetter);
+  gfx.setTextColor(K_BLACK);
+
+  const char *text = minutesText[0] ? minutesText : "-";
+
+  // minute list (up to "22,28,34") centered between bullet and right margin.
+  // Vertical centering uses digit metrics only — commas descend below the
+  // baseline, and including them in the box pushes the digits above center.
+  gfx.setFont(&HelveticaBold64pt7b);
+  gfx.getTextBounds("0", 0, 0, &tbx, &tby, &tbw, &tbh);
+  int16_t baseline = cy - (int16_t)tbh / 2 - tby;
+  gfx.getTextBounds(text, 0, 0, &tbx, &tby, &tbw, &tbh);
+  int16_t left = bulletCx + bulletR;
+  int16_t right = gfx.width() - 20;
+  gfx.setCursor(left + (right - left - (int16_t)tbw) / 2 - tbx, baseline);
+  gfx.print(text);
 }

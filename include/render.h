@@ -7,4 +7,6 @@
 void renderArrivals(Adafruit_GFX &gfx, const char *routeLetter,
                     const char *northRow, const char *southRow,
                     const char *busWestRow, const char *busEastRow);
+void renderCommute(Adafruit_GFX &gfx, const char *routeLetter,
+                   const char *minutesText);
 void renderMessage(Adafruit_GFX &gfx, const char *msg);

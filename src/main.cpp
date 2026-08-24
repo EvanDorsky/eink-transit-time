@@ -67,7 +67,7 @@ static const char *BUS_URL_WEST = // downtown-bound
 static const char *BUS_URL_EAST =
     "https://bustime.mta.info/api/siri/stop-monitoring.json?key=" BUSTIME_API_KEY
     "&MonitoringRef=BUS_STOP_E&MaximumStopVisits=8";
-static const uint32_t REFRESH_MS = 20 * 1000;
+static const uint32_t REFRESH_MS = 10 * 1000;
 static const size_t FEED_BUF_CAP = 1024 * 1024;
 
 GxEPD2_BW<GxEPD2_579_GDEY0579T93, GxEPD2_579_GDEY0579T93::HEIGHT>
@@ -166,20 +166,26 @@ static bool decodeFeed(const uint8_t *buf, size_t len, Arrivals *arrivals) {
 
 // ---------------- bus (SIRI StopMonitoring, JSON) ----------------
 
-// "2026-08-05T23:21:07.528-04:00" -> epoch seconds. Device TZ is UTC
-// (configTime offset 0), so mktime() interprets struct tm as UTC.
+// Civil date -> days since 1970-01-01 (Howard Hinnant's algorithm);
+// lets us convert a UTC struct tm to epoch without caring what the
+// device TZ is set to (mktime() would interpret it as local time)
+static long daysFromCivil(int y, int m, int d) {
+  y -= m <= 2;
+  const long era = (y >= 0 ? y : y - 399) / 400;
+  const unsigned yoe = (unsigned)(y - era * 400);
+  const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + (long)doe - 719468;
+}
+
+// "2026-08-05T23:21:07.528-04:00" -> epoch seconds. The date/time part is
+// converted as UTC, then the trailing offset is applied.
 static time_t parseIso8601(const char *s) {
   int Y, M, D, h, m;
   float sec;
   if (sscanf(s, "%d-%d-%dT%d:%d:%f", &Y, &M, &D, &h, &m, &sec) != 6) return 0;
-  struct tm tmv = {};
-  tmv.tm_year = Y - 1900;
-  tmv.tm_mon = M - 1;
-  tmv.tm_mday = D;
-  tmv.tm_hour = h;
-  tmv.tm_min = m;
-  tmv.tm_sec = (int)sec;
-  time_t t = mktime(&tmv);
+  time_t t = (time_t)daysFromCivil(Y, M, D) * 86400 + h * 3600 + m * 60 +
+             (int)sec;
 
   const char *tpos = strchr(s, 'T');
   const char *plus = strrchr(s, '+');
@@ -323,6 +329,19 @@ static void formatRow(char *out, size_t outLen, const time_t *arr,
     pos += snprintf(out + pos, outLen - pos, "%s%d", i ? "," : "", mins[i]);
 }
 
+// Commute mode: within the configured window (weekday mornings by
+// default), the panel shows only the route bullet and minutes to the next
+// Manhattan-bound train. Window is set from HA over MQTT (see mqtt.h).
+static bool commuteActiveNow() {
+  CommuteConfig cfg = mqttGetCommuteConfig();
+  if (!cfg.enabled) return false;
+  time_t now = time(nullptr);
+  struct tm lt;
+  localtime_r(&now, &lt);
+  if (!((cfg.daysMask >> lt.tm_wday) & 1)) return false;
+  return lt.tm_hour >= cfg.startHour && lt.tm_hour < cfg.endHour;
+}
+
 static char lastNorthRow[48] = "";
 static char lastSouthRow[48] = "";
 static bool firstDraw = true;
@@ -358,6 +377,43 @@ static void drawArrivals(const Arrivals &arrivals) {
   // Every successful cycle, even when the panel doesn't redraw — HA sensors
   // should stay fresh regardless
   mqttPublishState(route, northRow, southRow, busWestRow, busEastRow);
+
+  // A mode flip gets a clean full refresh either way
+  static bool lastCommute = false;
+  bool commute = commuteActiveNow();
+  if (commute != lastCommute) {
+    lastCommute = commute;
+    firstDraw = true;
+  }
+
+  if (commute) {
+    // Next three trains, e.g. "7,12,19" (worst case "22,28,34" still fits
+    // the panel at the commute font size)
+    static char lastCommuteRow[16] = "";
+    char row[16];
+    int mins[3];
+    int n = timesToMinutes(north, northCount, mins, 3);
+    size_t pos = 0;
+    row[0] = '\0';
+    for (int i = 0; i < n; i++)
+      pos += snprintf(row + pos, sizeof(row) - pos, "%s%d", i ? "," : "",
+                      mins[i]);
+
+    if (!firstDraw && strcmp(route, lastRoute) == 0 &&
+        strcmp(row, lastCommuteRow) == 0)
+      return;
+    strcpy(lastCommuteRow, row);
+    lastRoute = route;
+
+    if (firstDraw) display.setFullWindow();
+    else display.setPartialWindow(0, 0, display.width(), display.height());
+    display.firstPage();
+    do {
+      renderCommute(display, route, row);
+    } while (display.nextPage());
+    firstDraw = false;
+    return;
+  }
 
   if (!firstDraw && strcmp(route, lastRoute) == 0 &&
       strcmp(northRow, lastNorthRow) == 0 &&
@@ -452,8 +508,10 @@ void setup() {
   setupOta();
   mqttSetup();
 
-  // NTP so we can turn absolute arrival timestamps into minutes-away
-  configTime(0, 0, "pool.ntp.org", "time.google.com");
+  // NTP so we can turn absolute arrival timestamps into minutes-away.
+  // TZ is New York so localtime() drives the commute-mode window; all
+  // feed timestamps stay epoch-UTC (parseIso8601 no longer uses mktime).
+  configTzTime("EST5EDT,M3.2.0,M11.1.0", "pool.ntp.org", "time.google.com");
   drawMessage("setting clock...");
   while (time(nullptr) < 1600000000) delay(200);
 }

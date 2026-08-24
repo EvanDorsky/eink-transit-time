@@ -67,7 +67,12 @@ static const char *BUS_URL_WEST = // downtown-bound
 static const char *BUS_URL_EAST =
     "https://bustime.mta.info/api/siri/stop-monitoring.json?key=" BUSTIME_API_KEY
     "&MonitoringRef=BUS_STOP_E&MaximumStopVisits=8";
-static const uint32_t REFRESH_MS = 15 * 1000;
+// Subway feed is keyless and cheap to poll; 5s keeps worst-case phase lag
+// small. BusTime carries the API key and MTA guidance is ~30s polling, so
+// buses fetch on their own slower timer (cached epochs still count down
+// every cycle).
+static const uint32_t REFRESH_MS = 5 * 1000;
+static const uint32_t BUS_REFRESH_MS = 30 * 1000;
 static const size_t FEED_BUF_CAP = 1024 * 1024;
 
 GxEPD2_BW<GxEPD2_579_GDEY0579T93, GxEPD2_579_GDEY0579T93::HEIGHT>
@@ -311,7 +316,10 @@ static int timesToMinutes(const time_t *arr, size_t count, int *mins,
   int n = 0;
   for (size_t i = 0; i < count && n < maxOut; i++) {
     if (sorted[i] < now - 30) continue; // already left
-    mins[n++] = (int)((sorted[i] - now + 30) / 60);
+    // floor, not round: "6" promises at least 6 minutes. Rounding to
+    // nearest showed "7" for a train 6.5 min out — enough to miss it.
+    time_t d = sorted[i] - now;
+    mins[n++] = d > 0 ? (int)(d / 60) : 0;
   }
   return n;
 }
@@ -539,19 +547,43 @@ void loop() {
   memset(&arrivals, 0, sizeof(arrivals));
   bool subwayOk =
       fetchUrl(FEED_URL) && decodeFeed(feedSink.buf, feedSink.len, &arrivals);
-  const bool busEnabled = true;
-  bool busWestOk = busEnabled && fetchUrl(BUS_URL_WEST) &&
-                   parseBusJson(feedSink.buf, feedSink.len, arrivals.busWest,
-                                &arrivals.busWestCount);
-  bool busEastOk = busEnabled && fetchUrl(BUS_URL_EAST) &&
-                   parseBusJson(feedSink.buf, feedSink.len, arrivals.busEast,
-                                &arrivals.busEastCount);
 
-  if (subwayOk || busWestOk || busEastOk) {
+  // Buses on their own 30s cadence; between fetches reuse the cached epochs
+  // (minutes-away is recomputed from them every cycle, so nothing goes stale)
+  static time_t busWestCache[MAX_ARRIVALS], busEastCache[MAX_ARRIVALS];
+  static size_t busWestCacheCount = 0, busEastCacheCount = 0;
+  static uint32_t lastBusFetch = 0;
+  static bool busEverFetched = false;
+  bool busOk = true;
+  if (!busEverFetched || millis() - lastBusFetch >= BUS_REFRESH_MS) {
+    lastBusFetch = millis();
+    Arrivals bus;
+    memset(&bus, 0, sizeof(bus));
+    bool w = fetchUrl(BUS_URL_WEST) &&
+             parseBusJson(feedSink.buf, feedSink.len, bus.busWest,
+                          &bus.busWestCount);
+    bool e = fetchUrl(BUS_URL_EAST) &&
+             parseBusJson(feedSink.buf, feedSink.len, bus.busEast,
+                          &bus.busEastCount);
+    busOk = w || e;
+    if (busOk) {
+      memcpy(busWestCache, bus.busWest, sizeof(busWestCache));
+      busWestCacheCount = bus.busWestCount;
+      memcpy(busEastCache, bus.busEast, sizeof(busEastCache));
+      busEastCacheCount = bus.busEastCount;
+      busEverFetched = true;
+    }
+  }
+  memcpy(arrivals.busWest, busWestCache, sizeof(busWestCache));
+  arrivals.busWestCount = busWestCacheCount;
+  memcpy(arrivals.busEast, busEastCache, sizeof(busEastCache));
+  arrivals.busEastCount = busEastCacheCount;
+
+  if (subwayOk || busOk) {
     failures = 0;
     drawArrivals(arrivals);
-  } else if (++failures >= 3) {
-    LOGB("feed unavailable (3 consecutive failures)");
+  } else if (++failures >= 6) { // 30s of consecutive failures at 5s cadence
+    LOGB("feed unavailable (6 consecutive failures)");
     drawMessage("feed unavailable");
   }
 }

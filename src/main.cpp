@@ -67,7 +67,7 @@ static const char *BUS_URL_WEST = // downtown-bound
 static const char *BUS_URL_EAST =
     "https://bustime.mta.info/api/siri/stop-monitoring.json?key=" BUSTIME_API_KEY
     "&MonitoringRef=BUS_STOP_E&MaximumStopVisits=8";
-static const uint32_t REFRESH_MS = 10 * 1000;
+static const uint32_t REFRESH_MS = 15 * 1000;
 static const size_t FEED_BUF_CAP = 1024 * 1024;
 
 GxEPD2_BW<GxEPD2_579_GDEY0579T93, GxEPD2_579_GDEY0579T93::HEIGHT>

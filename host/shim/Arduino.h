@@ -5,6 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+// Included before the min/max macros below: libstdc++'s headers declare
+// members named min/max that the function-like macros would mangle
+#include <string>
 
 typedef bool boolean;
 typedef uint8_t byte;
@@ -34,7 +37,6 @@ static inline void yield() {}
 
 class __FlashStringHelper;
 
-#include <string>
 class String : public std::string {
  public:
   using std::string::string;

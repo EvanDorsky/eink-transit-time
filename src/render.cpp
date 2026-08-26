@@ -50,10 +50,143 @@ static void drawBusBadge(Adafruit_GFX &gfx, int16_t cx, int16_t cy) {
   gfx.setTextColor(K_BLACK);
 }
 
+
+// ---------------- weather ----------------
+//
+// Icons are drawn with GFX primitives rather than bitmaps: on a 1-bit panel
+// simple filled shapes read better at this size than dithered art, and it
+// keeps the flash cost at zero.
+
+static const int16_t WX_COL_W = 132; // right column reserved in renderArrivals
+
+static void wxSun(Adafruit_GFX &g, int16_t cx, int16_t cy, int16_t r) {
+  g.fillCircle(cx, cy, r, K_BLACK);
+  for (int i = 0; i < 8; i++) {
+    float a = i * 0.7853981634f; // pi/4
+    float c = cosf(a), s2 = sinf(a);
+    int16_t x0 = cx + (int16_t)((r + 3) * c), y0 = cy + (int16_t)((r + 3) * s2);
+    int16_t x1 = cx + (int16_t)((r + 8) * c), y1 = cy + (int16_t)((r + 8) * s2);
+    g.drawLine(x0, y0, x1, y1, K_BLACK);
+    g.drawLine(x0 + 1, y0, x1 + 1, y1, K_BLACK); // 2px stroke
+  }
+}
+
+static void wxMoon(Adafruit_GFX &g, int16_t cx, int16_t cy, int16_t r) {
+  g.fillCircle(cx, cy, r, K_BLACK);
+  g.fillCircle(cx + r / 2 + 2, cy - r / 3, r, K_WHITE); // bite out a crescent
+}
+
+// Cloud body; cx/cy is the centre of the flat underside
+static void wxCloud(Adafruit_GFX &g, int16_t cx, int16_t cy) {
+  g.fillCircle(cx - 11, cy - 5, 8, K_BLACK);
+  g.fillCircle(cx + 1, cy - 10, 11, K_BLACK);
+  g.fillCircle(cx + 13, cy - 5, 8, K_BLACK);
+  g.fillRect(cx - 11, cy - 6, 25, 7, K_BLACK);
+}
+
+static void wxDrops(Adafruit_GFX &g, int16_t cx, int16_t cy, int n) {
+  for (int i = 0; i < n; i++) {
+    int16_t x = cx - 12 + i * 11;
+    g.drawLine(x + 3, cy, x - 1, cy + 8, K_BLACK);
+    g.drawLine(x + 4, cy, x, cy + 8, K_BLACK);
+  }
+}
+
+static void wxFlakes(Adafruit_GFX &g, int16_t cx, int16_t cy, int n) {
+  for (int i = 0; i < n; i++) {
+    int16_t x = cx - 12 + i * 11, y = cy + 4;
+    g.drawLine(x - 3, y, x + 3, y, K_BLACK);
+    g.drawLine(x, y - 3, x, y + 3, K_BLACK);
+    g.drawLine(x - 2, y - 2, x + 2, y + 2, K_BLACK);
+    g.drawLine(x - 2, y + 2, x + 2, y - 2, K_BLACK);
+  }
+}
+
+static void wxBolt(Adafruit_GFX &g, int16_t cx, int16_t cy) {
+  g.fillTriangle(cx + 4, cy - 1, cx - 6, cy + 11, cx + 1, cy + 10, K_BLACK);
+  g.fillTriangle(cx + 4, cy - 1, cx + 1, cy + 10, cx + 7, cy + 3, K_BLACK);
+}
+
+static void wxLines(Adafruit_GFX &g, int16_t cx, int16_t cy, bool hook) {
+  for (int i = 0; i < 3; i++) {
+    int16_t y = cy - 8 + i * 8;
+    int16_t half = (i == 1) ? 16 : 12;
+    g.fillRect(cx - half, y, half * 2, 3, K_BLACK);
+    if (hook) g.fillRect(cx + half - 2, y - 4, 3, 8, K_BLACK);
+  }
+}
+
+// HA weather state string -> icon. Unknown conditions fall back to a cloud.
+static void drawWeatherIcon(Adafruit_GFX &gfx, const char *cond, int16_t cx,
+                            int16_t cy) {
+  bool night = strcmp(cond, "clear-night") == 0;
+  if (strcmp(cond, "sunny") == 0) { wxSun(gfx, cx, cy, 11); return; }
+  if (night) { wxMoon(gfx, cx, cy, 13); return; }
+  if (strcmp(cond, "partlycloudy") == 0) {
+    wxSun(gfx, cx + 8, cy - 9, 7);
+    wxCloud(gfx, cx - 2, cy + 10);
+    return;
+  }
+  if (strcmp(cond, "fog") == 0) { wxLines(gfx, cx, cy, false); return; }
+  if (strcmp(cond, "windy") == 0 || strcmp(cond, "windy-variant") == 0) {
+    wxLines(gfx, cx, cy, true);
+    return;
+  }
+  if (strcmp(cond, "exceptional") == 0) {
+    gfx.fillRect(cx - 3, cy - 14, 6, 18, K_BLACK);
+    gfx.fillRect(cx - 3, cy + 8, 6, 6, K_BLACK);
+    return;
+  }
+  // everything else is cloud-based
+  wxCloud(gfx, cx, cy + 2);
+  if (strcmp(cond, "rainy") == 0) wxDrops(gfx, cx, cy + 5, 3);
+  else if (strcmp(cond, "pouring") == 0) wxDrops(gfx, cx, cy + 5, 4);
+  else if (strcmp(cond, "snowy") == 0) wxFlakes(gfx, cx, cy + 4, 3);
+  else if (strcmp(cond, "snowy-rainy") == 0) {
+    wxDrops(gfx, cx - 6, cy + 5, 1);
+    wxFlakes(gfx, cx + 6, cy + 4, 1);
+  } else if (strcmp(cond, "hail") == 0) {
+    for (int i = 0; i < 3; i++)
+      gfx.fillCircle(cx - 11 + i * 11, cy + 9, 3, K_BLACK);
+  } else if (strcmp(cond, "lightning") == 0 ||
+             strcmp(cond, "lightning-rainy") == 0)
+    wxBolt(gfx, cx, cy + 4);
+}
+
+// Icon above a "lo-hi" range, right-aligned so the block hugs the corner.
+// Returns nothing; safe to call with a null/invalid WeatherInfo.
+static void drawWeather(Adafruit_GFX &gfx, const WeatherInfo *wx, int16_t right,
+                        int16_t top) {
+  if (!wx || !wx->valid) return;
+  char temps[16];
+  snprintf(temps, sizeof(temps), "%d-%d", wx->lo, wx->hi);
+
+  gfx.setFont(&HelveticaBold14pt7b);
+  gfx.setTextColor(K_BLACK);
+  int16_t tbx, tby;
+  uint16_t tbw, tbh;
+  gfx.getTextBounds(temps, 0, 0, &tbx, &tby, &tbw, &tbh);
+
+  const int16_t degR = 3;
+  int16_t total = (int16_t)tbw + degR * 2 + 4;
+  int16_t cx = right - total / 2;
+
+  drawWeatherIcon(gfx, wx->cond, cx, top + 20);
+
+  int16_t baseline = top + 44 + (int16_t)tbh;
+  gfx.setCursor(right - total - tbx, baseline);
+  gfx.print(temps);
+  // degree ring, drawn rather than typed: the font has no degree glyph
+  gfx.drawCircle(right - degR, baseline - (int16_t)tbh + degR, degR, K_BLACK);
+  gfx.drawCircle(right - degR, baseline - (int16_t)tbh + degR, degR - 1,
+                 K_BLACK);
+}
+
 // Left label plus big right-aligned minute numbers with a small "min"
 // underneath, like the real countdown clocks
 static void printArrivalRow(Adafruit_GFX &gfx, const char *label,
-                            const char *nums, int16_t baselineY) {
+                            const char *nums, int16_t baselineY,
+                            int16_t rightMargin) {
   gfx.setFont(&HelveticaBold26pt7b);
   gfx.setCursor(LABEL_X, baselineY);
   gfx.print(label);
@@ -65,7 +198,7 @@ static void printArrivalRow(Adafruit_GFX &gfx, const char *label,
   // small "min" sits at the right margin on the shared baseline
   gfx.setFont(&HelveticaBold14pt7b);
   gfx.getTextBounds("min", 0, 0, &tbx, &tby, &tbw, &tbh);
-  int16_t minX = gfx.width() - 16 - tbw - tbx;
+  int16_t minX = gfx.width() - rightMargin - tbw - tbx;
   gfx.setCursor(minX, baselineY);
   gfx.print("min");
 
@@ -77,7 +210,8 @@ static void printArrivalRow(Adafruit_GFX &gfx, const char *label,
 
 void renderArrivals(Adafruit_GFX &gfx, const char *routeLetter,
                     const char *northRow, const char *southRow,
-                    const char *busWestRow, const char *busEastRow) {
+                    const char *busWestRow, const char *busEastRow,
+                    const WeatherInfo *wx) {
   gfx.fillScreen(K_WHITE);
   gfx.setTextColor(K_BLACK);
 
@@ -89,10 +223,15 @@ void renderArrivals(Adafruit_GFX &gfx, const char *routeLetter,
   drawBusBadge(gfx, 42, ROW_BASELINES[2] - 18);
   drawBusBadge(gfx, 42, ROW_BASELINES[3] - 18);
 
-  printArrivalRow(gfx, "Manhattan", northRow, ROW_BASELINES[0]);
-  printArrivalRow(gfx, "Euclid", southRow, ROW_BASELINES[1]);
-  printArrivalRow(gfx, "Downtown", busWestRow, ROW_BASELINES[2]);
-  printArrivalRow(gfx, "Eastbound", busEastRow, ROW_BASELINES[3]);
+  // Arrival rows stop short of the reserved weather column when weather is
+  // available, and reclaim the full width when it isn't
+  int16_t margin = (wx && wx->valid) ? WX_COL_W : 16;
+  printArrivalRow(gfx, "Manhattan", northRow, ROW_BASELINES[0], margin);
+  printArrivalRow(gfx, "Euclid", southRow, ROW_BASELINES[1], margin);
+  printArrivalRow(gfx, "Downtown", busWestRow, ROW_BASELINES[2], margin);
+  printArrivalRow(gfx, "Eastbound", busEastRow, ROW_BASELINES[3], margin);
+
+  drawWeather(gfx, wx, gfx.width() - 16, 8);
 }
 
 void renderMessage(Adafruit_GFX &gfx, const char *msg) {
@@ -108,7 +247,7 @@ void renderMessage(Adafruit_GFX &gfx, const char *msg) {
 // is the biggest a GFXfont can hold (int8_t glyph offsets); at 1x the worst
 // case "22,28,34" still fits beside the bullet.
 void renderCommute(Adafruit_GFX &gfx, const char *routeLetter,
-                   const char *minutesText) {
+                   const char *minutesText, const WeatherInfo *wx) {
   gfx.fillScreen(K_WHITE);
   gfx.setTextColor(K_BLACK);
 
@@ -142,4 +281,6 @@ void renderCommute(Adafruit_GFX &gfx, const char *routeLetter,
   int16_t right = gfx.width() - 20;
   gfx.setCursor(left + (right - left - (int16_t)tbw) / 2 - tbx, baseline);
   gfx.print(text);
+
+  drawWeather(gfx, wx, gfx.width() - 16, 4);
 }

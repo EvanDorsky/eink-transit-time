@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "render.h"
 
 // MQTT bridge to Home Assistant (Mosquitto add-on on the HAOS Pi).
 // Publishes availability (LWT) + arrival rows; entities are created in HA
@@ -28,3 +29,7 @@ void mqttPublishState(const char *route, const char *northRow,
                       const char *southRow, const char *busWestRow,
                       const char *busEastRow);
 CommuteConfig mqttGetCommuteConfig();
+
+// Latest weather pushed from HA on transit-display/weather (retained JSON:
+// {"cond":"sunny","hi":81,"lo":63}). Invalid until the first message arrives.
+WeatherInfo mqttGetWeather();

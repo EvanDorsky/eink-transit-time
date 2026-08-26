@@ -7,6 +7,7 @@
 #include <string.h>
 #include <Adafruit_GFX.h>
 #include "render.h"
+#include <stdlib.h>
 
 static const int W = 792, H = 272;
 
@@ -14,13 +15,22 @@ int main(int argc, char **argv) {
   GFXcanvas1 canvas(W, H);
   const char *out = "preview.pgm";
 
+  // Weather comes from MQTT on the device; for previews take it from the
+  // environment (WX_COND= to blank it out entirely)
+  WeatherInfo wx = {};
+  const char *wc = getenv("WX_COND");
+  snprintf(wx.cond, sizeof(wx.cond), "%s", wc ? wc : "partlycloudy");
+  wx.lo = getenv("WX_LO") ? atoi(getenv("WX_LO")) : 63;
+  wx.hi = getenv("WX_HI") ? atoi(getenv("WX_HI")) : 81;
+  wx.valid = wx.cond[0] != 0;
+
   if (argc >= 3 && strcmp(argv[1], "--message") == 0) {
     renderMessage(canvas, argv[2]);
     if (argc > 3) out = argv[3];
   } else if (argc >= 3 && strcmp(argv[1], "--commute") == 0) {
     // preview --commute MINUTES [ROUTE] [out.pgm]
     const char *route = argc > 3 ? argv[3] : "C";
-    renderCommute(canvas, route, argv[2]);
+    renderCommute(canvas, route, argv[2], &wx);
     if (argc > 4) out = argv[4];
   } else {
     const char *north = argc > 1 ? argv[1] : "3,8,15";
@@ -28,7 +38,7 @@ int main(int argc, char **argv) {
     const char *busWest = argc > 3 ? argv[3] : "7,22";
     const char *busEast = argc > 4 ? argv[4] : "4,31";
     const char *route = argc > 5 ? argv[5] : "C";
-    renderArrivals(canvas, route, north, south, busWest, busEast);
+    renderArrivals(canvas, route, north, south, busWest, busEast, &wx);
     if (argc > 6) out = argv[6];
   }
 

@@ -23,6 +23,9 @@ static const char *TOPIC_COMMUTE_SET_START = "transit-display/commute/start/set"
 static const char *TOPIC_COMMUTE_SET_END = "transit-display/commute/end/set";
 static const char *TOPIC_COMMUTE_SET_JSON = "transit-display/commute/set";
 
+// Weather pushed from HA (retained); see mqtt.h for the payload shape
+static const char *TOPIC_WEATHER = "transit-display/weather";
+
 static WiFiClient mqttNet;
 static PubSubClient mqtt(mqttNet);
 static IPAddress brokerIp;
@@ -32,6 +35,10 @@ static CommuteConfig commuteCfg = {true, 7, 10, 0x3E};
 static Preferences commutePrefs; // NVS namespace kept open for saves
 
 CommuteConfig mqttGetCommuteConfig() { return commuteCfg; }
+
+static WeatherInfo weather = {};
+
+WeatherInfo mqttGetWeather() { return weather; }
 
 static void saveCommuteCfg() {
   commutePrefs.putBool("en", commuteCfg.enabled);
@@ -68,6 +75,21 @@ static void mqttCallback(char *topic, byte *payload, unsigned int len) {
   if (len >= sizeof(buf)) len = sizeof(buf) - 1;
   memcpy(buf, payload, len);
   buf[len] = '\0';
+
+  if (strcmp(topic, TOPIC_WEATHER) == 0) {
+    JsonDocument doc;
+    if (deserializeJson(doc, buf)) {
+      LOGB("weather: bad json ignored");
+      return;
+    }
+    const char *c = doc["cond"] | "";
+    snprintf(weather.cond, sizeof(weather.cond), "%s", c);
+    weather.hi = doc["hi"] | 0;
+    weather.lo = doc["lo"] | 0;
+    weather.valid = weather.cond[0] != 0;
+    LOGB("weather: %s %d-%d", weather.cond, weather.lo, weather.hi);
+    return;
+  }
 
   if (strcmp(topic, TOPIC_COMMUTE_SET_ENABLED) == 0) {
     commuteCfg.enabled = strcasecmp(buf, "ON") == 0 || strcmp(buf, "1") == 0;
@@ -203,6 +225,7 @@ static bool mqttConnect() {
   mqtt.subscribe(TOPIC_COMMUTE_SET_START);
   mqtt.subscribe(TOPIC_COMMUTE_SET_END);
   mqtt.subscribe(TOPIC_COMMUTE_SET_JSON);
+  mqtt.subscribe(TOPIC_WEATHER);
   publishDiscovery();
   publishCommuteState();
   LOGB("mqtt: connected");

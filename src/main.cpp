@@ -326,8 +326,8 @@ static int timesToMinutes(const time_t *arr, size_t count, int *mins,
 
 static void formatRow(char *out, size_t outLen, const time_t *arr,
                       size_t count) {
-  int mins[4];
-  int n = timesToMinutes(arr, count, mins, 4);
+  int mins[3];
+  int n = timesToMinutes(arr, count, mins, 3);
   if (n == 0) {
     snprintf(out, outLen, "");
     return;
@@ -386,6 +386,18 @@ static void drawArrivals(const Arrivals &arrivals) {
   // should stay fresh regardless
   mqttPublishState(route, northRow, southRow, busWestRow, busEastRow);
 
+  // Weather is pushed from HA; a change to it must force a repaint even when
+  // the arrival numbers are identical
+  WeatherInfo wx = mqttGetWeather();
+  static char lastWx[40] = "";
+  char wxKey[40];
+  snprintf(wxKey, sizeof(wxKey), "%d|%s|%d|%d", (int)wx.valid, wx.cond, wx.lo,
+           wx.hi);
+  if (strcmp(wxKey, lastWx) != 0) {
+    strcpy(lastWx, wxKey);
+    firstDraw = true;
+  }
+
   // A mode flip gets a clean full refresh either way
   static bool lastCommute = false;
   bool commute = commuteActiveNow();
@@ -417,7 +429,7 @@ static void drawArrivals(const Arrivals &arrivals) {
     else display.setPartialWindow(0, 0, display.width(), display.height());
     display.firstPage();
     do {
-      renderCommute(display, route, row);
+      renderCommute(display, route, row, &wx);
     } while (display.nextPage());
     firstDraw = false;
     return;
@@ -441,7 +453,8 @@ static void drawArrivals(const Arrivals &arrivals) {
 
   display.firstPage();
   do {
-    renderArrivals(display, route, northRow, southRow, busWestRow, busEastRow);
+    renderArrivals(display, route, northRow, southRow, busWestRow, busEastRow,
+                   &wx);
   } while (display.nextPage());
 
   firstDraw = false;

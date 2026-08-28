@@ -15,10 +15,10 @@ struct WeatherInfo {
   int lo;
   bool valid;
 };
-void renderArrivals(Adafruit_GFX &gfx, const char *routeLetter,
-                    const char *northRow, const char *southRow,
-                    const char *busWestRow, const char *busEastRow,
-                    const WeatherInfo *wx);
+void renderArrivals(Adafruit_GFX &gfx, const char *routeNorth,
+                    const char *routeSouth, const char *northRow,
+                    const char *southRow, const char *busWestRow,
+                    const char *busEastRow, const WeatherInfo *wx);
 void renderCommute(Adafruit_GFX &gfx, const char *routeLetter,
                    const char *minutesText, const WeatherInfo *wx);
 void renderMessage(Adafruit_GFX &gfx, const char *msg);

@@ -136,7 +136,9 @@ static const SensorDef SENSORS[] = {
     {"bus_east", "Bus eastbound",
      "{{ value_json.bus_east.split(',')[0] if value_json.bus_east else '' }}",
      "min"},
-    {"route", "Active route", "{{ value_json.route }}", nullptr},
+    {"route_north", "Route Manhattan-bound", "{{ value_json.route_n }}",
+     nullptr},
+    {"route_south", "Route Euclid-bound", "{{ value_json.route_s }}", nullptr},
 };
 
 // Shared device block so all entities group under one HA device
@@ -227,6 +229,8 @@ static bool mqttConnect() {
   mqtt.subscribe(TOPIC_COMMUTE_SET_JSON);
   mqtt.subscribe(TOPIC_WEATHER);
   publishDiscovery();
+  // retire the pre-split single "route" sensor (retained discovery config)
+  mqtt.publish("homeassistant/sensor/transit_display/route/config", "", true);
   publishCommuteState();
   LOGB("mqtt: connected");
   return true;
@@ -251,14 +255,14 @@ void mqttLoop() {
   if (!mqttConnect()) LOGB("mqtt: connect failed (rc=%d)", mqtt.state());
 }
 
-void mqttPublishState(const char *route, const char *northRow,
-                      const char *southRow, const char *busWestRow,
-                      const char *busEastRow) {
+void mqttPublishState(const char *routeNorth, const char *routeSouth,
+                      const char *northRow, const char *southRow,
+                      const char *busWestRow, const char *busEastRow) {
   if (!mqtt.connected()) return;
   char payload[256];
   snprintf(payload, sizeof(payload),
-           "{\"route\":\"%s\",\"north\":\"%s\",\"south\":\"%s\","
-           "\"bus_west\":\"%s\",\"bus_east\":\"%s\"}",
-           route, northRow, southRow, busWestRow, busEastRow);
+           "{\"route_n\":\"%s\",\"route_s\":\"%s\",\"north\":\"%s\","
+           "\"south\":\"%s\",\"bus_west\":\"%s\",\"bus_east\":\"%s\"}",
+           routeNorth, routeSouth, northRow, southRow, busWestRow, busEastRow);
   mqtt.publish(TOPIC_STATE, payload, true);
 }

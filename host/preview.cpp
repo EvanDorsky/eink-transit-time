@@ -38,7 +38,7 @@ int main(int argc, char **argv) {
     const char *busWest = argc > 3 ? argv[3] : "7,22";
     const char *busEast = argc > 4 ? argv[4] : "4,31";
     const char *route = argc > 5 ? argv[5] : "C";
-    renderArrivals(canvas, route, north, south, busWest, busEast, &wx);
+    renderArrivals(canvas, route, route, north, south, busWest, busEast, &wx);
     if (argc > 6) out = argv[6];
   }
 

@@ -25,9 +25,9 @@ struct CommuteConfig {
 
 void mqttSetup();
 void mqttLoop();
-void mqttPublishState(const char *route, const char *northRow,
-                      const char *southRow, const char *busWestRow,
-                      const char *busEastRow);
+void mqttPublishState(const char *routeNorth, const char *routeSouth,
+                      const char *northRow, const char *southRow,
+                      const char *busWestRow, const char *busEastRow);
 CommuteConfig mqttGetCommuteConfig();
 
 // Latest weather pushed from HA on transit-display/weather (retained JSON:

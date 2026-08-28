@@ -357,19 +357,23 @@ static bool firstDraw = true;
 static char lastBusWestRow[48] = "";
 static char lastBusEastRow[48] = "";
 static const char *lastRoute = "";
+static const char *lastRouteS = "";
 
 static void drawArrivals(const Arrivals &arrivals) {
   // Show the C as long as any C trains are coming; when none are (late
   // nights) fall back to the A, which only appears at this stop when it
-  // runs local
-  const char *route = ROUTE_PRIMARY;
+  // runs local. Each direction decides independently — around the service
+  // boundary the last C of the night can be southbound-only for a while.
+  const char *routeN = ROUTE_PRIMARY, *routeS = ROUTE_PRIMARY;
   const time_t *north = arrivals.north, *south = arrivals.south;
   size_t northCount = arrivals.northCount, southCount = arrivals.southCount;
-  if (northCount + southCount == 0 &&
-      arrivals.aNorthCount + arrivals.aSouthCount > 0) {
-    route = ROUTE_FALLBACK;
+  if (northCount == 0 && arrivals.aNorthCount > 0) {
+    routeN = ROUTE_FALLBACK;
     north = arrivals.aNorth;
     northCount = arrivals.aNorthCount;
+  }
+  if (southCount == 0 && arrivals.aSouthCount > 0) {
+    routeS = ROUTE_FALLBACK;
     south = arrivals.aSouth;
     southCount = arrivals.aSouthCount;
   }
@@ -384,7 +388,8 @@ static void drawArrivals(const Arrivals &arrivals) {
 
   // Every successful cycle, even when the panel doesn't redraw — HA sensors
   // should stay fresh regardless
-  mqttPublishState(route, northRow, southRow, busWestRow, busEastRow);
+  mqttPublishState(routeN, routeS, northRow, southRow, busWestRow,
+                   busEastRow);
 
   // Weather is pushed from HA; a change to it must force a repaint even when
   // the arrival numbers are identical
@@ -419,23 +424,24 @@ static void drawArrivals(const Arrivals &arrivals) {
       pos += snprintf(row + pos, sizeof(row) - pos, "%s%d", i ? "," : "",
                       mins[i]);
 
-    if (!firstDraw && strcmp(route, lastRoute) == 0 &&
+    if (!firstDraw && strcmp(routeN, lastRoute) == 0 &&
         strcmp(row, lastCommuteRow) == 0)
       return;
     strcpy(lastCommuteRow, row);
-    lastRoute = route;
+    lastRoute = routeN;
 
     if (firstDraw) display.setFullWindow();
     else display.setPartialWindow(0, 0, display.width(), display.height());
     display.firstPage();
     do {
-      renderCommute(display, route, row, &wx);
+      renderCommute(display, routeN, row, &wx);
     } while (display.nextPage());
     firstDraw = false;
     return;
   }
 
-  if (!firstDraw && strcmp(route, lastRoute) == 0 &&
+  if (!firstDraw && strcmp(routeN, lastRoute) == 0 &&
+      strcmp(routeS, lastRouteS) == 0 &&
       strcmp(northRow, lastNorthRow) == 0 &&
       strcmp(southRow, lastSouthRow) == 0 &&
       strcmp(busWestRow, lastBusWestRow) == 0 &&
@@ -446,15 +452,16 @@ static void drawArrivals(const Arrivals &arrivals) {
   strcpy(lastSouthRow, southRow);
   strcpy(lastBusWestRow, busWestRow);
   strcpy(lastBusEastRow, busEastRow);
-  lastRoute = route;
+  lastRoute = routeN;
+  lastRouteS = routeS;
 
   if (firstDraw) display.setFullWindow();
   else display.setPartialWindow(0, 0, display.width(), display.height());
 
   display.firstPage();
   do {
-    renderArrivals(display, route, northRow, southRow, busWestRow, busEastRow,
-                   &wx);
+    renderArrivals(display, routeN, routeS, northRow, southRow, busWestRow,
+                   busEastRow, &wx);
   } while (display.nextPage());
 
   firstDraw = false;

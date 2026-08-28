@@ -208,16 +208,17 @@ static void printArrivalRow(Adafruit_GFX &gfx, const char *label,
   gfx.print(nums);
 }
 
-void renderArrivals(Adafruit_GFX &gfx, const char *routeLetter,
-                    const char *northRow, const char *southRow,
-                    const char *busWestRow, const char *busEastRow,
-                    const WeatherInfo *wx) {
+void renderArrivals(Adafruit_GFX &gfx, const char *routeNorth,
+                    const char *routeSouth, const char *northRow,
+                    const char *southRow, const char *busWestRow,
+                    const char *busEastRow, const WeatherInfo *wx) {
   gfx.fillScreen(K_WHITE);
   gfx.setTextColor(K_BLACK);
 
-  // subway rows carry the route bullet, centered on the digit caps
-  drawRouteBullet(gfx, routeLetter, 42, ROW_BASELINES[0] - 18, 26);
-  drawRouteBullet(gfx, routeLetter, 42, ROW_BASELINES[1] - 18, 26);
+  // subway rows carry their own route bullet — the two directions can be
+  // on different lines around the C's service boundary
+  drawRouteBullet(gfx, routeNorth, 42, ROW_BASELINES[0] - 18, 26);
+  drawRouteBullet(gfx, routeSouth, 42, ROW_BASELINES[1] - 18, 26);
 
   // bus rows carry the shared B25/B26 badge in the same column
   drawBusBadge(gfx, 42, ROW_BASELINES[2] - 18);

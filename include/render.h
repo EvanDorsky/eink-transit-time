@@ -40,3 +40,20 @@ void renderCommute(Adafruit_GFX &gfx, const char *routeLetter,
                    const char *minutesText, const WeatherInfo *wx,
                    const Notice *note);
 void renderMessage(Adafruit_GFX &gfx, const char *msg);
+
+// Hourly outlook screen (toggled with the HOME key): the next HOURLY_N hours
+// as time labels, condition icons, a temperature line and precipitation
+// probability bars. Pushed from HA on transit-display/hourly.
+static const int HOURLY_N = 8;
+struct HourlyHour {
+  char t[6];     // "12pm"
+  char cond[20]; // HA weather condition
+  int temp;      // Fahrenheit
+  int pop;       // precipitation probability, 0-100
+};
+struct HourlyInfo {
+  HourlyHour h[HOURLY_N];
+  int count;
+  bool valid;
+};
+void renderHourly(Adafruit_GFX &gfx, const HourlyInfo *hourly);

@@ -26,6 +26,7 @@ static const char *TOPIC_COMMUTE_SET_JSON = "transit-display/commute/set";
 // Weather and notices pushed from HA (retained); see mqtt.h for the shapes
 static const char *TOPIC_WEATHER = "transit-display/weather";
 static const char *TOPIC_NOTIFY = "transit-display/notify";
+static const char *TOPIC_HOURLY = "transit-display/hourly";
 
 static WiFiClient mqttNet;
 static PubSubClient mqtt(mqttNet);
@@ -49,6 +50,10 @@ int mqttGetNotices(Notice *out, int max) {
   for (int i = 0; i < n; i++) out[i] = notices[i];
   return n;
 }
+
+static HourlyInfo hourly = {};
+
+HourlyInfo mqttGetHourly() { return hourly; }
 
 static void saveCommuteCfg() {
   commutePrefs.putBool("en", commuteCfg.enabled);
@@ -81,7 +86,7 @@ static uint8_t clampHour(long v) {
 }
 
 static void mqttCallback(char *topic, byte *payload, unsigned int len) {
-  char buf[512]; // notify payloads carry several items
+  char buf[768]; // notify/hourly payloads carry several items
   if (len >= sizeof(buf)) len = sizeof(buf) - 1;
   memcpy(buf, payload, len);
   buf[len] = '\0';
@@ -125,6 +130,29 @@ static void mqttCallback(char *topic, byte *payload, unsigned int len) {
     }
     noticeCount = n;
     LOGB("notify: %d item(s)", n);
+    return;
+  }
+
+  if (strcmp(topic, TOPIC_HOURLY) == 0) {
+    JsonDocument doc;
+    if (deserializeJson(doc, buf)) {
+      LOGB("hourly: bad json ignored");
+      return;
+    }
+    HourlyInfo h = {};
+    for (JsonObject it : doc["h"].as<JsonArray>()) {
+      if (h.count >= HOURLY_N) break;
+      HourlyHour &o = h.h[h.count];
+      snprintf(o.t, sizeof(o.t), "%s", it["t"] | "");
+      snprintf(o.cond, sizeof(o.cond), "%s", it["c"] | "");
+      o.temp = it["f"] | 0;
+      o.pop = it["p"] | 0;
+      if (!o.t[0]) continue;
+      h.count++;
+    }
+    h.valid = h.count > 0;
+    hourly = h;
+    LOGB("hourly: %d hour(s) from %s", h.count, h.count ? h.h[0].t : "-");
     return;
   }
 
@@ -266,6 +294,7 @@ static bool mqttConnect() {
   mqtt.subscribe(TOPIC_COMMUTE_SET_JSON);
   mqtt.subscribe(TOPIC_WEATHER);
   mqtt.subscribe(TOPIC_NOTIFY);
+  mqtt.subscribe(TOPIC_HOURLY);
   publishDiscovery();
   // retire the pre-split single "route" sensor (retained discovery config)
   mqtt.publish("homeassistant/sensor/transit_display/route/config", "", true);

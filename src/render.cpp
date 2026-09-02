@@ -379,3 +379,81 @@ void renderCommute(Adafruit_GFX &gfx, const char *routeLetter,
 
   drawSideColumn(gfx, wx, note);
 }
+
+// ---- hourly outlook screen ------------------------------------------------
+// One column per hour across the full width: time label, condition icon,
+// a temperature line with the number over each point, and a precipitation
+// probability bar at the bottom. No axes — the numbers are the labels.
+static const int16_t HR_TIME_BASE = 26;   // 14pt time label baseline
+static const int16_t HR_ICON_CY = 62;     // icon centre
+static const int16_t HR_TEMP_TOP = 118;   // y of the hottest point
+static const int16_t HR_TEMP_BOT = 186;   // y of the coldest point
+static const int16_t HR_POP_BASE = 262;   // bar baseline
+static const int16_t HR_POP_MAX = 54;     // bar height at 100%
+static const int16_t HR_POP_W = 56;
+
+void renderHourly(Adafruit_GFX &gfx, const HourlyInfo *hourly) {
+  gfx.fillScreen(K_WHITE);
+  if (!hourly || !hourly->valid || hourly->count <= 0) {
+    renderMessage(gfx, "no hourly forecast");
+    return;
+  }
+  int n = hourly->count < HOURLY_N ? hourly->count : HOURLY_N;
+  int16_t colW = gfx.width() / n;
+  int16_t cx[HOURLY_N];
+  for (int i = 0; i < n; i++) cx[i] = colW * i + colW / 2;
+
+  gfx.setTextColor(K_BLACK);
+  gfx.setFont(&HelveticaBold14pt7b);
+  for (int i = 0; i < n; i++) {
+    printCentered(gfx, hourly->h[i].t, cx[i], HR_TIME_BASE);
+    drawWeatherIcon(gfx, hourly->h[i].cond, cx[i], HR_ICON_CY);
+  }
+
+  // Temperature line: auto-scaled to the range, but never stretched past a
+  // 10 degree span so a flat afternoon still reads flat
+  int lo = hourly->h[0].temp, hi = lo;
+  for (int i = 1; i < n; i++) {
+    if (hourly->h[i].temp < lo) lo = hourly->h[i].temp;
+    if (hourly->h[i].temp > hi) hi = hourly->h[i].temp;
+  }
+  int span = hi - lo;
+  if (span < 10) {
+    int pad = 10 - span;
+    lo -= pad / 2;
+    hi += pad - pad / 2;
+    span = 10;
+  }
+  int16_t py[HOURLY_N];
+  for (int i = 0; i < n; i++)
+    py[i] = HR_TEMP_BOT -
+            (int16_t)((HR_TEMP_BOT - HR_TEMP_TOP) * (hourly->h[i].temp - lo) /
+                      span);
+  for (int i = 0; i + 1 < n; i++)
+    for (int d = -1; d <= 1; d++) // 3px stroke
+      gfx.drawLine(cx[i], py[i] + d, cx[i + 1], py[i + 1] + d, K_BLACK);
+  for (int i = 0; i < n; i++) {
+    gfx.fillCircle(cx[i], py[i], 5, K_BLACK);
+    char num[8];
+    snprintf(num, sizeof(num), "%d", hourly->h[i].temp);
+    // Number above the point, with a white halo so it stays legible where
+    // the line climbs steeply through it
+    int16_t tbx, tby;
+    uint16_t tbw, tbh;
+    gfx.getTextBounds(num, 0, 0, &tbx, &tby, &tbw, &tbh);
+    int16_t x = cx[i] - (int16_t)tbw / 2 - tbx, base = py[i] - 12;
+    gfx.fillRect(x + tbx - 3, base + tby - 2, tbw + 6, tbh + 4, K_WHITE);
+    gfx.setCursor(x, base);
+    gfx.print(num);
+  }
+
+  // Precipitation probability bars on a hairline baseline
+  gfx.drawFastHLine(12, HR_POP_BASE, gfx.width() - 24, K_BLACK);
+  for (int i = 0; i < n; i++) {
+    int pop = hourly->h[i].pop;
+    if (pop <= 0) continue;
+    int16_t h = (int16_t)(HR_POP_MAX * pop / 100);
+    if (h < 2) h = 2;
+    gfx.fillRect(cx[i] - HR_POP_W / 2, HR_POP_BASE - h, HR_POP_W, h, K_BLACK);
+  }
+}

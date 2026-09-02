@@ -42,3 +42,9 @@ WeatherInfo mqttGetWeather();
 // list (or empty payload) clears the zone. Returns the number stored.
 static const int MAX_NOTICES = 6;
 int mqttGetNotices(Notice *out, int max);
+
+// Hourly outlook for the HOME-key screen, pushed retained from HA on
+// transit-display/hourly as {"h":[{"t":"1pm","c":"rainy","f":75,"p":40},
+// ...]} (t = local hour label, c = HA condition, f = temp in F, p = precip
+// probability %). Invalid until the first message arrives.
+HourlyInfo mqttGetHourly();

@@ -44,6 +44,8 @@ __attribute__((format(printf, 1, 2))) void logLine(const char *fmt, ...) {
 // CrowPanel 5.79" pinout (dual-SSD1683 panel, GDEY0579T93)
 #define HOME_KEY 2
 #define EPD_POWER 7
+// CrowPanel HOME key (active low); toggles the hourly outlook screen
+#define HOME_KEY 2
 #define EPD_MOSI 11
 #define EPD_SCK 12
 #define EPD_CS 45
@@ -356,6 +358,38 @@ static bool commuteActiveNow() {
 static char lastNorthRow[48] = "";
 static char lastSouthRow[48] = "";
 static bool firstDraw = true;
+// Hourly outlook screen, toggled by the HOME key. The ISR only flags the
+// press (with a crude debounce); loop() acts on it between fetches.
+static bool showHourly = false;
+static volatile bool homeKeyPressed = false;
+
+static void IRAM_ATTR onHomeKey() {
+  static uint32_t last = 0;
+  uint32_t now = millis();
+  if (now - last < 300) return;
+  last = now;
+  homeKeyPressed = true;
+}
+
+static void drawHourly() {
+  HourlyInfo h = mqttGetHourly();
+  static char lastKey[320] = "";
+  char key[320];
+  size_t pos = snprintf(key, sizeof(key), "%d|%d", (int)h.valid, h.count);
+  for (int i = 0; i < h.count && pos < sizeof(key); i++)
+    pos += snprintf(key + pos, sizeof(key) - pos, "|%s,%s,%d,%d", h.h[i].t,
+                    h.h[i].cond, h.h[i].temp, h.h[i].pop);
+  if (!firstDraw && strcmp(key, lastKey) == 0) return;
+  strcpy(lastKey, key);
+
+  if (firstDraw) display.setFullWindow();
+  else display.setPartialWindow(0, 0, display.width(), display.height());
+  display.firstPage();
+  do {
+    renderHourly(display, &h);
+  } while (display.nextPage());
+  firstDraw = false;
+}
 
 static char lastBusWestRow[48] = "";
 static char lastBusEastRow[48] = "";
@@ -393,6 +427,14 @@ static void drawArrivals(const Arrivals &arrivals) {
   // should stay fresh regardless
   mqttPublishState(routeN, routeS, northRow, southRow, busWestRow,
                    busEastRow);
+
+  // On the hourly screen the feeds keep flowing to HA but the panel shows
+  // the forecast; the side-column change tracking below resumes (with a
+  // forced full refresh) when the key toggles back
+  if (showHourly) {
+    drawHourly();
+    return;
+  }
 
   // Weather is pushed from HA; a change to it must force a repaint even when
   // the arrival numbers are identical
@@ -537,6 +579,9 @@ void setup() {
   digitalWrite(EPD_POWER, HIGH);
   delay(100);
 
+  pinMode(HOME_KEY, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(HOME_KEY), onHomeKey, FALLING);
+
   SPI.begin(EPD_SCK, -1, EPD_MOSI, EPD_CS);
   display.init(115200);
   display.setRotation(0); // landscape, 792x272
@@ -575,6 +620,15 @@ void loop() {
   }
 
   mqttLoop(); // cheap; keeps the broker connection alive between fetches
+
+  if (homeKeyPressed) {
+    homeKeyPressed = false;
+    showHourly = !showHourly;
+    firstDraw = true; // mode flip gets a clean full refresh
+    LOGB("home key: %s", showHourly ? "hourly" : "arrivals");
+    if (showHourly) drawHourly();
+    else lastFetch = 0; // repaint arrivals with fresh data right away
+  }
 
   if (lastFetch != 0 && millis() - lastFetch < REFRESH_MS) {
     delay(250);
@@ -625,6 +679,6 @@ void loop() {
     drawArrivals(arrivals);
   } else if (++failures >= 6) { // 30s of consecutive failures at 5s cadence
     LOGB("feed unavailable (6 consecutive failures)");
-    drawMessage("feed unavailable");
+    if (!showHourly) drawMessage("feed unavailable");
   }
 }

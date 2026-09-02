@@ -3,6 +3,7 @@
 //   preview [north] [south] [bus-west] [bus-east] [route-letter] [out.pgm]
 //   preview --message "text" [out.pgm]
 //   preview --commute MINUTES [ROUTE] [out.pgm]
+//   preview --hourly [out.pgm]      (HOURLY_JSON= overrides the sample data)
 #include <stdio.h>
 #include <string.h>
 #include <Adafruit_GFX.h>
@@ -38,7 +39,26 @@ int main(int argc, char **argv) {
   note.idx = getenv("NOTE_IDX") ? atoi(getenv("NOTE_IDX")) : 0;
   note.count = getenv("NOTE_COUNT") ? atoi(getenv("NOTE_COUNT")) : 1;
 
-  if (argc >= 3 && strcmp(argv[1], "--message") == 0) {
+  if (argc >= 2 && strcmp(argv[1], "--hourly") == 0) {
+    // Sample data mirrors the MQTT payload shape; HOURLY_JSON is a compact
+    // "t,c,f,p;t,c,f,p;..." list for trying other shapes
+    HourlyInfo hr = {};
+    const char *spec = getenv("HOURLY_JSON")
+                           ? getenv("HOURLY_JSON")
+                           : "12pm,cloudy,73,12;1pm,cloudy,73,12;2pm,rainy,74,22;"
+                             "3pm,rainy,74,22;4pm,rainy,74,22;5pm,rainy,75,21;"
+                             "6pm,rainy,74,21;7pm,rainy,73,21";
+    char tmp[512];
+    snprintf(tmp, sizeof(tmp), "%s", spec);
+    for (char *tok = strtok(tmp, ";"); tok && hr.count < HOURLY_N;
+         tok = strtok(NULL, ";")) {
+      HourlyHour &h = hr.h[hr.count++];
+      sscanf(tok, "%5[^,],%19[^,],%d,%d", h.t, h.cond, &h.temp, &h.pop);
+    }
+    hr.valid = hr.count > 0;
+    renderHourly(canvas, &hr);
+    if (argc > 2) out = argv[2];
+  } else if (argc >= 3 && strcmp(argv[1], "--message") == 0) {
     renderMessage(canvas, argv[2]);
     if (argc > 3) out = argv[3];
   } else if (argc >= 3 && strcmp(argv[1], "--commute") == 0) {

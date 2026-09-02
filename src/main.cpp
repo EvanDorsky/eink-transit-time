@@ -73,6 +73,9 @@ static const char *BUS_URL_EAST =
 // every cycle).
 static const uint32_t REFRESH_MS = 5 * 1000;
 static const uint32_t BUS_REFRESH_MS = 30 * 1000;
+// How long each notice holds the bottom of the side column when several
+// are active (the zone only rotates when there is more than one)
+static const uint32_t NOTICE_ROTATE_MS = 15 * 1000;
 static const size_t FEED_BUF_CAP = 1024 * 1024;
 
 GxEPD2_BW<GxEPD2_579_GDEY0579T93, GxEPD2_579_GDEY0579T93::HEIGHT>
@@ -394,14 +397,32 @@ static void drawArrivals(const Arrivals &arrivals) {
   // Weather is pushed from HA; a change to it must force a repaint even when
   // the arrival numbers are identical
   WeatherInfo wx = mqttGetWeather();
-  static char lastWx[40] = "";
-  char wxKey[40];
-  snprintf(wxKey, sizeof(wxKey), "%d|%s|%d|%d", (int)wx.valid, wx.cond, wx.lo,
-           wx.hi);
+  static char lastWx[64] = "";
+  char wxKey[64];
+  snprintf(wxKey, sizeof(wxKey), "%d|%s|%d|%d|%d|%s", (int)wx.valid, wx.cond,
+           wx.lo, wx.hi, wx.rainIn, wx.rainAt);
   if (strcmp(wxKey, lastWx) != 0) {
     strcpy(lastWx, wxKey);
     firstDraw = true;
   }
+
+  // Notices for the bottom of the side column. With several active, the
+  // zone cycles through them on a fixed clock; a change of the shown one
+  // is a repaint like any other (partial refresh, no flash).
+  Notice notes[MAX_NOTICES];
+  int noteCount = mqttGetNotices(notes, MAX_NOTICES);
+  Notice note = {};
+  if (noteCount > 0) {
+    note = notes[(millis() / NOTICE_ROTATE_MS) % noteCount];
+    note.idx = (millis() / NOTICE_ROTATE_MS) % noteCount;
+    note.count = noteCount;
+  }
+  static char lastNote[64] = "";
+  char noteKey[64];
+  snprintf(noteKey, sizeof(noteKey), "%s|%s|%d|%d|%d", note.title, note.text,
+           note.pct, note.idx, note.count);
+  bool noteChanged = strcmp(noteKey, lastNote) != 0;
+  strcpy(lastNote, noteKey);
 
   // A mode flip gets a clean full refresh either way
   static bool lastCommute = false;
@@ -440,7 +461,7 @@ static void drawArrivals(const Arrivals &arrivals) {
     return;
   }
 
-  if (!firstDraw && strcmp(routeN, lastRoute) == 0 &&
+  if (!firstDraw && !noteChanged && strcmp(routeN, lastRoute) == 0 &&
       strcmp(routeS, lastRouteS) == 0 &&
       strcmp(northRow, lastNorthRow) == 0 &&
       strcmp(southRow, lastSouthRow) == 0 &&
@@ -461,7 +482,7 @@ static void drawArrivals(const Arrivals &arrivals) {
   display.firstPage();
   do {
     renderArrivals(display, routeN, routeS, northRow, southRow, busWestRow,
-                   busEastRow, &wx);
+                   busEastRow, &wx, noteCount ? &note : nullptr);
   } while (display.nextPage());
 
   firstDraw = false;

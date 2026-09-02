@@ -182,6 +182,87 @@ static void drawWeather(Adafruit_GFX &gfx, const WeatherInfo *wx, int16_t right,
                  K_BLACK);
 }
 
+// ---------------- side column: rain + notices ----------------
+//
+// The reserved right column reads top-to-bottom as weather / rain outlook /
+// notification. The two lower zones are only drawn in arrivals mode.
+
+static const int16_t RAIN_ZONE_TOP = 92;   // icon+label ~80px tall
+static const int16_t NOTE_ZONE_TOP = 190;  // title / bar / text / dots
+
+// Centred text helper for the column; uses the current font
+static void printCentered(Adafruit_GFX &gfx, const char *s, int16_t cx,
+                          int16_t baseline) {
+  int16_t tbx, tby;
+  uint16_t tbw, tbh;
+  gfx.getTextBounds(s, 0, 0, &tbx, &tby, &tbw, &tbh);
+  gfx.setCursor(cx - (int16_t)tbw / 2 - tbx, baseline);
+  gfx.print(s);
+}
+
+// Umbrella: half-disc canopy with a scalloped edge and a J handle
+static void drawUmbrella(Adafruit_GFX &g, int16_t cx, int16_t cy) {
+  const int16_t r = 22;
+  g.fillCircle(cx, cy, r, K_BLACK);
+  g.fillRect(cx - r - 1, cy + 1, r * 2 + 3, r + 2, K_WHITE);
+  for (int i = -1; i <= 1; i++) g.fillCircle(cx + i * 15, cy + 4, 5, K_WHITE);
+  g.fillRect(cx - 1, cy - r - 4, 3, 5, K_BLACK); // tip
+  g.fillRect(cx - 1, cy, 3, 20, K_BLACK);        // shaft
+  g.drawCircle(cx - 5, cy + 20, 5, K_BLACK);     // hook (bottom half only)
+  g.drawCircle(cx - 5, cy + 20, 4, K_BLACK);
+  g.fillRect(cx - 11, cy + 10, 12, 10, K_WHITE);
+  g.fillRect(cx - 1, cy, 3, 21, K_BLACK);
+}
+
+// Middle zone: umbrella over the hour rain starts ("6pm", or "now");
+// nothing at all when the next 12h are dry
+static void drawRain(Adafruit_GFX &gfx, const WeatherInfo *wx, int16_t cx) {
+  if (!wx || !wx->valid || wx->rainIn < 0) return;
+  drawUmbrella(gfx, cx, RAIN_ZONE_TOP + 26);
+  const char *label =
+      (wx->rainIn == 0 || !wx->rainAt[0]) ? "now" : wx->rainAt;
+  gfx.setFont(&HelveticaBold14pt7b);
+  gfx.setTextColor(K_BLACK);
+  printCentered(gfx, label, cx, RAIN_ZONE_TOP + 76);
+}
+
+// Bottom zone: one notice at a time. Title, optional progress bar, detail
+// line, then pager dots if there is more than one notice in rotation.
+static void drawNotice(Adafruit_GFX &gfx, const Notice *note, int16_t cx,
+                       int16_t colW) {
+  if (!note || !note->title[0]) return;
+  gfx.setTextColor(K_BLACK);
+  int16_t y = NOTE_ZONE_TOP + 20;
+  gfx.setFont(&HelveticaBold14pt7b);
+  printCentered(gfx, note->title, cx, y);
+  y += 10;
+
+  if (note->pct >= 0) {
+    const int16_t w = colW - 24, h = 12;
+    int16_t x0 = cx - w / 2;
+    gfx.drawRect(x0, y, w, h, K_BLACK);
+    gfx.drawRect(x0 + 1, y + 1, w - 2, h - 2, K_BLACK);
+    int16_t fill = (int16_t)((w - 6) * (note->pct > 100 ? 100 : note->pct) / 100);
+    if (fill > 0) gfx.fillRect(x0 + 3, y + 3, fill, h - 6, K_BLACK);
+    y += h + 6;
+  }
+
+  if (note->text[0]) {
+    gfx.setFont(&HelveticaBold11pt7b);
+    printCentered(gfx, note->text, cx, y + 16);
+    y += 22;
+  }
+
+  if (note->count > 1) {
+    int16_t dy = gfx.height() - 8;
+    int16_t x = cx - (note->count - 1) * 5;
+    for (int i = 0; i < note->count; i++, x += 10) {
+      if (i == note->idx) gfx.fillCircle(x, dy, 3, K_BLACK);
+      else gfx.drawCircle(x, dy, 3, K_BLACK);
+    }
+  }
+}
+
 // Left label plus big right-aligned minute numbers with a small "min"
 // underneath, like the real countdown clocks
 static void printArrivalRow(Adafruit_GFX &gfx, const char *label,
@@ -211,7 +292,8 @@ static void printArrivalRow(Adafruit_GFX &gfx, const char *label,
 void renderArrivals(Adafruit_GFX &gfx, const char *routeNorth,
                     const char *routeSouth, const char *northRow,
                     const char *southRow, const char *busWestRow,
-                    const char *busEastRow, const WeatherInfo *wx) {
+                    const char *busEastRow, const WeatherInfo *wx,
+                    const Notice *note) {
   gfx.fillScreen(K_WHITE);
   gfx.setTextColor(K_BLACK);
 
@@ -232,7 +314,13 @@ void renderArrivals(Adafruit_GFX &gfx, const char *routeNorth,
   printArrivalRow(gfx, "Downtown", busWestRow, ROW_BASELINES[2], margin);
   printArrivalRow(gfx, "Eastbound", busEastRow, ROW_BASELINES[3], margin);
 
-  drawWeather(gfx, wx, gfx.width() - 16, 8);
+  int16_t right = gfx.width() - 16;
+  drawWeather(gfx, wx, right, 8);
+  if (wx && wx->valid) {
+    int16_t cx = right - (WX_COL_W - 16) / 2;
+    drawRain(gfx, wx, cx);
+    drawNotice(gfx, note, cx, WX_COL_W - 16);
+  }
 }
 
 void renderMessage(Adafruit_GFX &gfx, const char *msg) {

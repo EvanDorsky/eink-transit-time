@@ -23,8 +23,9 @@ static const char *TOPIC_COMMUTE_SET_START = "transit-display/commute/start/set"
 static const char *TOPIC_COMMUTE_SET_END = "transit-display/commute/end/set";
 static const char *TOPIC_COMMUTE_SET_JSON = "transit-display/commute/set";
 
-// Weather pushed from HA (retained); see mqtt.h for the payload shape
+// Weather and notices pushed from HA (retained); see mqtt.h for the shapes
 static const char *TOPIC_WEATHER = "transit-display/weather";
+static const char *TOPIC_NOTIFY = "transit-display/notify";
 
 static WiFiClient mqttNet;
 static PubSubClient mqtt(mqttNet);
@@ -39,6 +40,15 @@ CommuteConfig mqttGetCommuteConfig() { return commuteCfg; }
 static WeatherInfo weather = {};
 
 WeatherInfo mqttGetWeather() { return weather; }
+
+static Notice notices[MAX_NOTICES];
+static int noticeCount = 0;
+
+int mqttGetNotices(Notice *out, int max) {
+  int n = noticeCount < max ? noticeCount : max;
+  for (int i = 0; i < n; i++) out[i] = notices[i];
+  return n;
+}
 
 static void saveCommuteCfg() {
   commutePrefs.putBool("en", commuteCfg.enabled);
@@ -71,7 +81,7 @@ static uint8_t clampHour(long v) {
 }
 
 static void mqttCallback(char *topic, byte *payload, unsigned int len) {
-  char buf[160];
+  char buf[512]; // notify payloads carry several items
   if (len >= sizeof(buf)) len = sizeof(buf) - 1;
   memcpy(buf, payload, len);
   buf[len] = '\0';
@@ -86,8 +96,35 @@ static void mqttCallback(char *topic, byte *payload, unsigned int len) {
     snprintf(weather.cond, sizeof(weather.cond), "%s", c);
     weather.hi = doc["hi"] | 0;
     weather.lo = doc["lo"] | 0;
+    weather.rainIn = doc["rain_in"] | -1;
+    const char *at = doc["rain_at"] | "";
+    snprintf(weather.rainAt, sizeof(weather.rainAt), "%s", at);
     weather.valid = weather.cond[0] != 0;
-    LOGB("weather: %s %d-%d", weather.cond, weather.lo, weather.hi);
+    LOGB("weather: %s %d-%d rain_in=%d at=%s", weather.cond, weather.lo,
+         weather.hi, weather.rainIn, weather.rainAt);
+    return;
+  }
+
+  if (strcmp(topic, TOPIC_NOTIFY) == 0) {
+    JsonDocument doc;
+    if (len == 0 || deserializeJson(doc, buf)) {
+      if (len) LOGB("notify: bad json ignored");
+      noticeCount = 0;
+      return;
+    }
+    int n = 0;
+    for (JsonObject it : doc["items"].as<JsonArray>()) {
+      if (n >= MAX_NOTICES) break;
+      const char *title = it["title"] | "";
+      if (!title[0]) continue;
+      Notice &o = notices[n];
+      snprintf(o.title, sizeof(o.title), "%s", title);
+      snprintf(o.text, sizeof(o.text), "%s", it["text"] | "");
+      o.pct = it["pct"] | -1;
+      n++;
+    }
+    noticeCount = n;
+    LOGB("notify: %d item(s)", n);
     return;
   }
 
@@ -228,6 +265,7 @@ static bool mqttConnect() {
   mqtt.subscribe(TOPIC_COMMUTE_SET_END);
   mqtt.subscribe(TOPIC_COMMUTE_SET_JSON);
   mqtt.subscribe(TOPIC_WEATHER);
+  mqtt.subscribe(TOPIC_NOTIFY);
   publishDiscovery();
   // retire the pre-split single "route" sensor (retained discovery config)
   mqtt.publish("homeassistant/sensor/transit_display/route/config", "", true);

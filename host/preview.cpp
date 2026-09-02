@@ -23,6 +23,20 @@ int main(int argc, char **argv) {
   wx.lo = getenv("WX_LO") ? atoi(getenv("WX_LO")) : 63;
   wx.hi = getenv("WX_HI") ? atoi(getenv("WX_HI")) : 81;
   wx.valid = wx.cond[0] != 0;
+  // RAIN_IN=hours (0 = now, unset/-1 = dry), RAIN_AT=label ("6pm")
+  wx.rainIn = getenv("RAIN_IN") ? atoi(getenv("RAIN_IN")) : -1;
+  snprintf(wx.rainAt, sizeof(wx.rainAt), "%s",
+           getenv("RAIN_AT") ? getenv("RAIN_AT") : "");
+
+  // Bottom-zone notice: NOTE_TITLE / NOTE_TEXT / NOTE_PCT / NOTE_IDX / NOTE_COUNT
+  Notice note = {};
+  snprintf(note.title, sizeof(note.title), "%s",
+           getenv("NOTE_TITLE") ? getenv("NOTE_TITLE") : "");
+  snprintf(note.text, sizeof(note.text), "%s",
+           getenv("NOTE_TEXT") ? getenv("NOTE_TEXT") : "");
+  note.pct = getenv("NOTE_PCT") ? atoi(getenv("NOTE_PCT")) : -1;
+  note.idx = getenv("NOTE_IDX") ? atoi(getenv("NOTE_IDX")) : 0;
+  note.count = getenv("NOTE_COUNT") ? atoi(getenv("NOTE_COUNT")) : 1;
 
   if (argc >= 3 && strcmp(argv[1], "--message") == 0) {
     renderMessage(canvas, argv[2]);
@@ -38,7 +52,8 @@ int main(int argc, char **argv) {
     const char *busWest = argc > 3 ? argv[3] : "7,22";
     const char *busEast = argc > 4 ? argv[4] : "4,31";
     const char *route = argc > 5 ? argv[5] : "C";
-    renderArrivals(canvas, route, route, north, south, busWest, busEast, &wx);
+    renderArrivals(canvas, route, route, north, south, busWest, busEast, &wx,
+                   &note);
     if (argc > 6) out = argv[6];
   }
 

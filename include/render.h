@@ -14,11 +14,28 @@ struct WeatherInfo {
   int hi;
   int lo;
   bool valid;
+  // Rain outlook for the middle of the side column: hours until the first
+  // wet hour in the next 12 (0 = now, -1 = none), and that hour as a short
+  // local label ("6pm"). Left blank when dry.
+  int rainIn;
+  char rainAt[8];
+};
+
+// One notification for the bottom of the side column, pushed from HA.
+// `pct` >= 0 adds a progress bar between title and text (print jobs);
+// idx/count drive the pager dots when several notices are rotating.
+struct Notice {
+  char title[16];
+  char text[20];
+  int pct;
+  uint8_t idx;
+  uint8_t count;
 };
 void renderArrivals(Adafruit_GFX &gfx, const char *routeNorth,
                     const char *routeSouth, const char *northRow,
                     const char *southRow, const char *busWestRow,
-                    const char *busEastRow, const WeatherInfo *wx);
+                    const char *busEastRow, const WeatherInfo *wx,
+                    const Notice *note);
 void renderCommute(Adafruit_GFX &gfx, const char *routeLetter,
                    const char *minutesText, const WeatherInfo *wx);
 void renderMessage(Adafruit_GFX &gfx, const char *msg);

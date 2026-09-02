@@ -37,5 +37,6 @@ void renderArrivals(Adafruit_GFX &gfx, const char *routeNorth,
                     const char *busEastRow, const WeatherInfo *wx,
                     const Notice *note);
 void renderCommute(Adafruit_GFX &gfx, const char *routeLetter,
-                   const char *minutesText, const WeatherInfo *wx);
+                   const char *minutesText, const WeatherInfo *wx,
+                   const Notice *note);
 void renderMessage(Adafruit_GFX &gfx, const char *msg);

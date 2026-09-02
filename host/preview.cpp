@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
   } else if (argc >= 3 && strcmp(argv[1], "--commute") == 0) {
     // preview --commute MINUTES [ROUTE] [out.pgm]
     const char *route = argc > 3 ? argv[3] : "C";
-    renderCommute(canvas, route, argv[2], &wx);
+    renderCommute(canvas, route, argv[2], &wx, &note);
     if (argc > 4) out = argv[4];
   } else {
     const char *north = argc > 1 ? argv[1] : "3,8,15";

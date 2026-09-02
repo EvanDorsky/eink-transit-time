@@ -445,7 +445,7 @@ static void drawArrivals(const Arrivals &arrivals) {
       pos += snprintf(row + pos, sizeof(row) - pos, "%s%d", i ? "," : "",
                       mins[i]);
 
-    if (!firstDraw && strcmp(routeN, lastRoute) == 0 &&
+    if (!firstDraw && !noteChanged && strcmp(routeN, lastRoute) == 0 &&
         strcmp(row, lastCommuteRow) == 0)
       return;
     strcpy(lastCommuteRow, row);
@@ -455,7 +455,7 @@ static void drawArrivals(const Arrivals &arrivals) {
     else display.setPartialWindow(0, 0, display.width(), display.height());
     display.firstPage();
     do {
-      renderCommute(display, routeN, row, &wx);
+      renderCommute(display, routeN, row, &wx, noteCount ? &note : nullptr);
     } while (display.nextPage());
     firstDraw = false;
     return;

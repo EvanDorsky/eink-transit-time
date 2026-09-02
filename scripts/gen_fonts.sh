@@ -27,6 +27,10 @@ echo "generated $OUT_DIR/HelveticaBold64pt7b.h"
 
 # Commute bullet letter: route letters only (A-C) at 85pt, the largest
 # glyph that still fits a GFXfont's int8_t offsets
+# commute-mode minute list ("22,28,34") beside the side column: comma+digits
+FONTCONVERT_FACE=1 FONTCONVERT_NAME=HelveticaBold \
+  "$BIN" Helvetica.ttc 54 44 57 > "$OUT_DIR/HelveticaBold54pt7b.h"
+echo "generated $OUT_DIR/HelveticaBold54pt7b.h"
 FONTCONVERT_FACE=1 FONTCONVERT_NAME=HelveticaBold \
   "$BIN" Helvetica.ttc 85 65 67 > "$OUT_DIR/HelveticaBold85pt7b.h"
 echo "generated $OUT_DIR/HelveticaBold85pt7b.h"

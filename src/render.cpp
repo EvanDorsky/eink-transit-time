@@ -4,7 +4,7 @@
 #include "fonts/HelveticaBold20pt7b.h"
 #include "fonts/HelveticaBold22pt7b.h"
 #include "fonts/HelveticaBold26pt7b.h"
-#include "fonts/HelveticaBold64pt7b.h"
+#include "fonts/HelveticaBold54pt7b.h"
 #include "fonts/HelveticaBold85pt7b.h"
 
 // Same values as GxEPD_BLACK / GxEPD_WHITE, redefined here so this file
@@ -153,9 +153,8 @@ static void drawWeatherIcon(Adafruit_GFX &gfx, const char *cond, int16_t cx,
     wxBolt(gfx, cx, cy + 4);
 }
 
-// Icon above a "lo-hi" range, right-aligned so the block hugs the corner.
-// Returns nothing; safe to call with a null/invalid WeatherInfo.
-static void drawWeather(Adafruit_GFX &gfx, const WeatherInfo *wx, int16_t right,
+// Icon above a "lo-hi" range, both centred on the column axis cx
+static void drawWeather(Adafruit_GFX &gfx, const WeatherInfo *wx, int16_t cx,
                         int16_t top) {
   if (!wx || !wx->valid) return;
   char temps[16];
@@ -169,7 +168,7 @@ static void drawWeather(Adafruit_GFX &gfx, const WeatherInfo *wx, int16_t right,
 
   const int16_t degR = 3;
   int16_t total = (int16_t)tbw + degR * 2 + 4;
-  int16_t cx = right - total / 2;
+  int16_t right = cx + total / 2;
 
   drawWeatherIcon(gfx, wx->cond, cx, top + 20);
 
@@ -182,13 +181,16 @@ static void drawWeather(Adafruit_GFX &gfx, const WeatherInfo *wx, int16_t right,
                  K_BLACK);
 }
 
-// ---------------- side column: rain + notices ----------------
+// ---------------- side column: weather / rain / notices ----------------
 //
-// The reserved right column reads top-to-bottom as weather / rain outlook /
-// notification. The two lower zones are only drawn in arrivals mode.
+// Everything in the reserved right column is centred on one axis, COL_CX,
+// and kept within COL_W so it stays clear of the arrival numbers to its
+// left. The same column is drawn in both arrivals and commute mode.
 
-static const int16_t RAIN_ZONE_TOP = 92;   // icon+label ~80px tall
-static const int16_t NOTE_ZONE_TOP = 190;  // title / bar / text / dots
+static const int16_t COL_W = 92;            // max content width
+static const int16_t COL_INSET = 46;        // axis sits this far from the edge
+static const int16_t RAIN_ZONE_TOP = 92;    // icon+label ~80px tall
+static const int16_t NOTE_ZONE_TOP = 190;   // title / bar / text / dots
 
 // Centred text helper for the column; uses the current font
 static void printCentered(Adafruit_GFX &gfx, const char *s, int16_t cx,
@@ -228,27 +230,26 @@ static void drawRain(Adafruit_GFX &gfx, const WeatherInfo *wx, int16_t cx) {
 
 // Bottom zone: one notice at a time. Title, optional progress bar, detail
 // line, then pager dots if there is more than one notice in rotation.
-static void drawNotice(Adafruit_GFX &gfx, const Notice *note, int16_t cx,
-                       int16_t colW) {
+// 11pt throughout: 14pt "Printing" alone is wider than the column.
+static void drawNotice(Adafruit_GFX &gfx, const Notice *note, int16_t cx) {
   if (!note || !note->title[0]) return;
   gfx.setTextColor(K_BLACK);
-  int16_t y = NOTE_ZONE_TOP + 20;
-  gfx.setFont(&HelveticaBold14pt7b);
+  gfx.setFont(&HelveticaBold11pt7b);
+  int16_t y = NOTE_ZONE_TOP + 16;
   printCentered(gfx, note->title, cx, y);
-  y += 10;
+  y += 8;
 
   if (note->pct >= 0) {
-    const int16_t w = colW - 24, h = 12;
+    const int16_t w = COL_W - 12, h = 12;
     int16_t x0 = cx - w / 2;
     gfx.drawRect(x0, y, w, h, K_BLACK);
     gfx.drawRect(x0 + 1, y + 1, w - 2, h - 2, K_BLACK);
     int16_t fill = (int16_t)((w - 6) * (note->pct > 100 ? 100 : note->pct) / 100);
     if (fill > 0) gfx.fillRect(x0 + 3, y + 3, fill, h - 6, K_BLACK);
-    y += h + 6;
+    y += h + 4;
   }
 
   if (note->text[0]) {
-    gfx.setFont(&HelveticaBold11pt7b);
     printCentered(gfx, note->text, cx, y + 16);
     y += 22;
   }
@@ -261,6 +262,17 @@ static void drawNotice(Adafruit_GFX &gfx, const Notice *note, int16_t cx,
       else gfx.drawCircle(x, dy, 3, K_BLACK);
     }
   }
+}
+
+// The whole column; a no-op without valid weather (callers then reclaim
+// the width for the main content)
+static void drawSideColumn(Adafruit_GFX &gfx, const WeatherInfo *wx,
+                           const Notice *note) {
+  if (!wx || !wx->valid) return;
+  int16_t cx = gfx.width() - COL_INSET;
+  drawWeather(gfx, wx, cx, 8);
+  drawRain(gfx, wx, cx);
+  drawNotice(gfx, note, cx);
 }
 
 // Left label plus big right-aligned minute numbers with a small "min"
@@ -314,13 +326,7 @@ void renderArrivals(Adafruit_GFX &gfx, const char *routeNorth,
   printArrivalRow(gfx, "Downtown", busWestRow, ROW_BASELINES[2], margin);
   printArrivalRow(gfx, "Eastbound", busEastRow, ROW_BASELINES[3], margin);
 
-  int16_t right = gfx.width() - 16;
-  drawWeather(gfx, wx, right, 8);
-  if (wx && wx->valid) {
-    int16_t cx = right - (WX_COL_W - 16) / 2;
-    drawRain(gfx, wx, cx);
-    drawNotice(gfx, note, cx, WX_COL_W - 16);
-  }
+  drawSideColumn(gfx, wx, note);
 }
 
 void renderMessage(Adafruit_GFX &gfx, const char *msg) {
@@ -331,20 +337,19 @@ void renderMessage(Adafruit_GFX &gfx, const char *msg) {
   gfx.print(msg);
 }
 
-// Commute mode: nothing but a giant route bullet and the minutes until the
-// next three trains ("7,12,19"), sized for the 792x272 panel. The 64pt face
-// is the biggest a GFXfont can hold (int8_t glyph offsets); at 1x the worst
-// case "22,28,34" still fits beside the bullet.
+// Commute mode: a giant route bullet, the minutes until the next three
+// trains ("7,12,19") and the same side column as arrivals mode. 54pt is the
+// largest digit face whose worst case "22,28,34" fits between the bullet
+// and the column.
 void renderCommute(Adafruit_GFX &gfx, const char *routeLetter,
-                   const char *minutesText, const WeatherInfo *wx) {
+                   const char *minutesText, const WeatherInfo *wx,
+                   const Notice *note) {
   gfx.fillScreen(K_WHITE);
   gfx.setTextColor(K_BLACK);
 
   const int16_t cy = gfx.height() / 2; // 136
-  // r=105 keeps the 85pt letter at the same ~0.60 letter/disc height
-  // ratio as the small arrival-row bullets
-  const int16_t bulletR = 105;
-  const int16_t bulletCx = 20 + bulletR;
+  const int16_t bulletR = 95;
+  const int16_t bulletCx = 16 + bulletR;
 
   // route bullet at nearly full panel height, letter knocked out in white
   gfx.fillCircle(bulletCx, cy, bulletR, K_BLACK);
@@ -359,17 +364,18 @@ void renderCommute(Adafruit_GFX &gfx, const char *routeLetter,
 
   const char *text = minutesText[0] ? minutesText : "-";
 
-  // minute list (up to "22,28,34") centered between bullet and right margin.
-  // Vertical centering uses digit metrics only — commas descend below the
-  // baseline, and including them in the box pushes the digits above center.
-  gfx.setFont(&HelveticaBold64pt7b);
+  // minute list centered between the bullet and the side column (or the
+  // right margin when there is no weather to show). Vertical centering
+  // uses digit metrics only — commas descend below the baseline, and
+  // including them in the box pushes the digits above center.
+  gfx.setFont(&HelveticaBold54pt7b);
   gfx.getTextBounds("0", 0, 0, &tbx, &tby, &tbw, &tbh);
   int16_t baseline = cy - (int16_t)tbh / 2 - tby;
   gfx.getTextBounds(text, 0, 0, &tbx, &tby, &tbw, &tbh);
   int16_t left = bulletCx + bulletR;
-  int16_t right = gfx.width() - 20;
+  int16_t right = gfx.width() - ((wx && wx->valid) ? WX_COL_W : 20);
   gfx.setCursor(left + (right - left - (int16_t)tbw) / 2 - tbx, baseline);
   gfx.print(text);
 
-  drawWeather(gfx, wx, gfx.width() - 16, 4);
+  drawSideColumn(gfx, wx, note);
 }

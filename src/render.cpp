@@ -389,7 +389,7 @@ static const int16_t HR_ICON_CY = 62;     // icon centre
 static const int16_t HR_TEMP_TOP = 118;   // y of the hottest point
 static const int16_t HR_TEMP_BOT = 186;   // y of the coldest point
 static const int16_t HR_POP_BASE = 262;   // bar baseline
-static const int16_t HR_POP_MAX = 54;     // bar height at 100%
+static const int16_t HR_POP_MAX = 46;     // bar height at 100%
 static const int16_t HR_POP_W = 56;
 
 void renderHourly(Adafruit_GFX &gfx, const HourlyInfo *hourly) {
@@ -447,13 +447,24 @@ void renderHourly(Adafruit_GFX &gfx, const HourlyInfo *hourly) {
     gfx.print(num);
   }
 
-  // Precipitation probability bars on a hairline baseline
+  // Precipitation probability bars on a hairline baseline; only the peak
+  // (first of equals) gets its percentage, which is enough to scale the rest
   gfx.drawFastHLine(12, HR_POP_BASE, gfx.width() - 24, K_BLACK);
+  int peak = -1;
+  for (int i = 0; i < n; i++)
+    if (hourly->h[i].pop > 0 && (peak < 0 || hourly->h[i].pop > hourly->h[peak].pop))
+      peak = i;
+  gfx.setFont(&HelveticaBold11pt7b);
   for (int i = 0; i < n; i++) {
     int pop = hourly->h[i].pop;
     if (pop <= 0) continue;
     int16_t h = (int16_t)(HR_POP_MAX * pop / 100);
     if (h < 2) h = 2;
     gfx.fillRect(cx[i] - HR_POP_W / 2, HR_POP_BASE - h, HR_POP_W, h, K_BLACK);
+    if (i == peak) {
+      char pct[8];
+      snprintf(pct, sizeof(pct), "%d%%", pop);
+      printCentered(gfx, pct, cx[i], HR_POP_BASE - h - 5);
+    }
   }
 }

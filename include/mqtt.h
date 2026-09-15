@@ -25,6 +25,9 @@ struct CommuteConfig {
 
 void mqttSetup();
 void mqttLoop();
+// Call once when WiFi comes back after a drop: clears the cached broker IP
+// and the reconnect backoff so the next mqttLoop() re-resolves and dials.
+void mqttOnWifiReconnect();
 void mqttPublishState(const char *routeNorth, const char *routeSouth,
                       const char *northRow, const char *southRow,
                       const char *busWestRow, const char *busEastRow);

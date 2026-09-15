@@ -539,6 +539,94 @@ static void drawMessage(const char *msg) {
   // firstDraw = true; // next data draw does a clean full refresh
 }
 
+// ---------------- wifi ----------------
+
+// The core's setAutoReconnect only re-dials for a whitelist of disconnect
+// reasons (WiFiGeneric.cpp _isReconnectableReason). An AP that reboots sends
+// DEAUTH_LEAVING (3), and one that's half-up while booting answers with
+// AUTH_FAIL (202); neither is on the list, so the core parks the station in
+// WL_DISCONNECTED and never tries again. That's how the 2026-09-06 router
+// blip took this display offline for nine days while everything else on the
+// WiFi came back. So: own the retry here. Re-dial on a fixed cadence while
+// down, and if that hasn't worked in WIFI_REBOOT_MS, reboot — the cleanest
+// reset of the radio, mDNS, MQTT and the TLS sockets there is, and nothing
+// on this box is lost by it (commute config lives in NVS).
+static const uint32_t WIFI_KICK_MS = 15 * 1000;
+static const uint32_t WIFI_REBOOT_MS = 5 * 60 * 1000;
+static const uint32_t WIFI_NOTICE_MS = 60 * 1000; // stale times are worse than none
+
+static volatile uint8_t wifiLastReason = 0;
+
+static void onWifiEvent(WiFiEvent_t ev, WiFiEventInfo_t info) {
+  if (ev == ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
+    wifiLastReason = info.wifi_sta_disconnected.reason;
+}
+
+static void wifiKick() {
+  WiFi.disconnect(false); // drop the association, keep the radio up
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+}
+
+// Blocks until associated with an IP. Used at boot, where there's nothing
+// useful to do without the network anyway.
+static void wifiWaitForBoot() {
+  uint32_t t0 = millis(), lastKick = t0;
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(250);
+    if (millis() - t0 >= WIFI_REBOOT_MS) {
+      LOGB("wifi: no link %lus after boot, restarting", (unsigned long)WIFI_REBOOT_MS / 1000);
+      ESP.restart();
+    }
+    if (millis() - lastKick >= WIFI_KICK_MS) {
+      lastKick = millis();
+      LOGB("wifi: still connecting (last reason %u), re-dialing", wifiLastReason);
+      wifiKick();
+    }
+  }
+}
+
+// Called every loop pass. Returns true while the link is up. While down,
+// the log lines only reach USB serial (the UDP log needs the link); the
+// recovery line carries the outage length and last reason so the story is
+// still readable afterwards.
+static bool wifiEnsure() {
+  static uint32_t downSince = 0, lastKick = 0;
+  static bool noticeDrawn = false;
+  uint32_t now = millis();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    if (downSince != 0) {
+      LOGB("wifi: back after %lus (last reason %u): %s",
+           (unsigned long)((now - downSince) / 1000), wifiLastReason,
+           WiFi.localIP().toString().c_str());
+      mqttOnWifiReconnect();
+      if (noticeDrawn) firstDraw = true; // repaint over the notice
+      downSince = 0;
+      noticeDrawn = false;
+    }
+    return true;
+  }
+
+  if (downSince == 0) {
+    downSince = lastKick = now;
+    LOGB("wifi: lost (reason %u)", wifiLastReason);
+  }
+  if (now - downSince >= WIFI_REBOOT_MS) {
+    LOGB("wifi: down %lus, restarting", (unsigned long)((now - downSince) / 1000));
+    delay(50); // let serial drain
+    ESP.restart();
+  }
+  if (!noticeDrawn && now - downSince >= WIFI_NOTICE_MS) {
+    noticeDrawn = true;
+    drawMessage("wifi lost, reconnecting...");
+  }
+  if (now - lastKick >= WIFI_KICK_MS) {
+    lastKick = now;
+    wifiKick();
+  }
+  return false;
+}
+
 // ---------------- OTA (ArduinoOTA / espota) ----------------
 
 static const char *OTA_HOSTNAME = "transit-display";
@@ -590,9 +678,10 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(OTA_HOSTNAME);
+  WiFi.onEvent(onWifiEvent);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  WiFi.setAutoReconnect(true);
-  while (WiFi.status() != WL_CONNECTED) delay(500);
+  WiFi.setAutoReconnect(true); // fast path for the reasons the core does handle
+  wifiWaitForBoot();
 
   // Wall-powered, no BLE coex: modem sleep off for reliable multicast RX
   // (mDNS/OTA discovery) and lower fetch latency
@@ -619,6 +708,11 @@ void loop() {
     return;
   }
 
+  if (!wifiEnsure()) { // re-dials / reboots as needed; nothing else works without it
+    delay(250);
+    return;
+  }
+
   mqttLoop(); // cheap; keeps the broker connection alive between fetches
 
   if (homeKeyPressed) {
@@ -635,8 +729,6 @@ void loop() {
     return;
   }
   lastFetch = millis();
-
-  if (WiFi.status() != WL_CONNECTED) return; // core auto-reconnects
 
   Arrivals arrivals;
   memset(&arrivals, 0, sizeof(arrivals));

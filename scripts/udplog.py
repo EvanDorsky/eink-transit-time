@@ -13,5 +13,5 @@ s.bind(("", PORT))
 print(f"listening on udp/{PORT} (ctrl-c to quit)")
 while True:
     data, addr = s.recvfrom(2048)
-    ts = datetime.datetime.now().strftime("%H:%M:%S")
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"{ts}  {data.decode(errors='replace').rstrip()}", flush=True)

@@ -310,13 +310,24 @@ void mqttSetup() {
   loadCommuteCfg();
 }
 
+static uint32_t lastAttempt = 0;
+
+void mqttOnWifiReconnect() {
+  // The link came back, possibly on a different IP or behind a different
+  // broker address (the Pi has moved between interfaces before). Forget the
+  // cached IP so the next attempt re-resolves, and don't wait out the
+  // backoff.
+  brokerIp = IPAddress();
+  if (mqtt.connected()) mqtt.disconnect(); // socket is dead underneath anyway
+  lastAttempt = 0;
+}
+
 void mqttLoop() {
   if (WiFi.status() != WL_CONNECTED) return;
   if (mqtt.connected()) {
     mqtt.loop();
     return;
   }
-  static uint32_t lastAttempt = 0;
   if (lastAttempt != 0 && millis() - lastAttempt < 5000) return;
   lastAttempt = millis();
   if (!mqttConnect()) LOGB("mqtt: connect failed (rc=%d)", mqtt.state());

@@ -28,6 +28,10 @@ static const char *TOPIC_WEATHER = "transit-display/weather";
 static const char *TOPIC_NOTIFY = "transit-display/notify";
 static const char *TOPIC_HOURLY = "transit-display/hourly";
 
+// Pause (panel wear): HA publishes ON/OFF retained; see mqtt.h
+static const char *TOPIC_PAUSE_SET = "transit-display/pause/set";
+static const char *TOPIC_PAUSE_STATE = "transit-display/pause/state";
+
 static WiFiClient mqttNet;
 static PubSubClient mqtt(mqttNet);
 static IPAddress brokerIp;
@@ -54,6 +58,10 @@ int mqttGetNotices(Notice *out, int max) {
 static HourlyInfo hourly = {};
 
 HourlyInfo mqttGetHourly() { return hourly; }
+
+static bool paused = false; // not persisted: the retained set topic restores it on connect
+
+bool mqttGetPaused() { return paused; }
 
 static void saveCommuteCfg() {
   commutePrefs.putBool("en", commuteCfg.enabled);
@@ -153,6 +161,14 @@ static void mqttCallback(char *topic, byte *payload, unsigned int len) {
     h.valid = h.count > 0;
     hourly = h;
     LOGB("hourly: %d hour(s) from %s", h.count, h.count ? h.h[0].t : "-");
+    return;
+  }
+
+  if (strcmp(topic, TOPIC_PAUSE_SET) == 0) {
+    bool p = strcasecmp(buf, "ON") == 0 || strcmp(buf, "1") == 0;
+    if (p != paused) LOGB("pause: %s", p ? "on" : "off");
+    paused = p;
+    mqtt.publish(TOPIC_PAUSE_STATE, paused ? "ON" : "OFF", true);
     return;
   }
 
@@ -263,6 +279,16 @@ static void publishDiscovery() {
              DEV_BLOCK);
     mqtt.publish(topic, payload, true);
   }
+
+  // Pause switch (normally driven by an HA automation; manual toggles work
+  // until the automation's next retained publish)
+  snprintf(payload, sizeof(payload),
+           "{\"uniq_id\":\"transit_display_paused\","
+           "\"name\":\"Pause updates\",\"icon\":\"mdi:pause-circle-outline\","
+           "\"stat_t\":\"%s\",\"cmd_t\":\"%s\",\"avty_t\":\"%s\",%s}",
+           TOPIC_PAUSE_STATE, TOPIC_PAUSE_SET, TOPIC_AVAIL, DEV_BLOCK);
+  mqtt.publish("homeassistant/switch/transit_display/paused/config", payload,
+               true);
 }
 
 static bool resolveBroker() {
@@ -295,7 +321,9 @@ static bool mqttConnect() {
   mqtt.subscribe(TOPIC_WEATHER);
   mqtt.subscribe(TOPIC_NOTIFY);
   mqtt.subscribe(TOPIC_HOURLY);
+  mqtt.subscribe(TOPIC_PAUSE_SET);
   publishDiscovery();
+  mqtt.publish(TOPIC_PAUSE_STATE, paused ? "ON" : "OFF", true);
   // retire the pre-split single "route" sensor (retained discovery config)
   mqtt.publish("homeassistant/sensor/transit_display/route/config", "", true);
   publishCommuteState();

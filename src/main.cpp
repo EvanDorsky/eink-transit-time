@@ -76,8 +76,23 @@ static const char *BUS_URL_EAST =
 static const uint32_t REFRESH_MS = 5 * 1000;
 static const uint32_t BUS_REFRESH_MS = 30 * 1000;
 // How long each notice holds the bottom of the side column when several
-// are active (the zone only rotates when there is more than one)
+// are active (the zone only rotates when there is more than one). The
+// redraw gate below means the shown notice actually changes at most once a
+// minute.
 static const uint32_t NOTICE_ROTATE_MS = 15 * 1000;
+// Panel wear. The GDEY0579T93 is rated for 1,000,000 refreshes (or 5 years),
+// i.e. ~550/day; redrawing on every 5 s fetch that changed anything was
+// ~9,100 partials/day (measured 2026-09-28: twelve countdowns ticking at
+// independent phases, plus prediction jitter like 11 -> 10 -> 11). So a
+// changed screen is drawn at most once per REDRAW_MIN_MS (the data is only
+// minute-resolution anyway), and only once it has read the same on two
+// consecutive fetches, so a flap never costs a refresh. REDRAW_MAX_WAIT_MS
+// caps how long that stability check can hold a due redraw. Full-refresh
+// events (weather, commute flip, HOME key, resume) still draw immediately.
+static const uint32_t REDRAW_MIN_MS = 60 * 1000;
+static const uint32_t REDRAW_MAX_WAIT_MS = 30 * 1000;
+// While paused (mqtt.h), the HOME key shows live arrivals for this long
+static const uint32_t PEEK_MS = 5 * 60 * 1000;
 static const size_t FEED_BUF_CAP = 1024 * 1024;
 
 GxEPD2_BW<GxEPD2_579_GDEY0579T93, GxEPD2_579_GDEY0579T93::HEIGHT>
@@ -355,9 +370,29 @@ static bool commuteActiveNow() {
   return lt.tm_hour >= cfg.startHour && lt.tm_hour < cfg.endHour;
 }
 
-static char lastNorthRow[48] = "";
-static char lastSouthRow[48] = "";
 static bool firstDraw = true;
+static bool pauseShown = false; // the "paused" message is what's on the panel
+
+// Redraw gate for the arrivals/commute screens (see REDRAW_MIN_MS). `key` is
+// everything the screen shows. Call once per fetch cycle.
+static char drawnKey[256] = ""; // what's on the panel
+static char prevKey[256] = "";  // last cycle's key, for the stability check
+static uint32_t lastDrawMs = 0;
+
+static bool redrawDue(const char *key) {
+  bool stable = strcmp(key, prevKey) == 0;
+  snprintf(prevKey, sizeof(prevKey), "%s", key);
+  if (firstDraw) return true; // full-refresh events never wait
+  if (strcmp(key, drawnKey) == 0) return false;
+  uint32_t since = millis() - lastDrawMs;
+  if (since < REDRAW_MIN_MS) return false;
+  return stable || since >= REDRAW_MIN_MS + REDRAW_MAX_WAIT_MS;
+}
+
+static void markDrawn(const char *key) {
+  snprintf(drawnKey, sizeof(drawnKey), "%s", key);
+  lastDrawMs = millis();
+}
 // Hourly outlook screen, toggled by the HOME key. The ISR only flags the
 // press (with a crude debounce); loop() acts on it between fetches.
 static bool showHourly = false;
@@ -390,11 +425,6 @@ static void drawHourly() {
   } while (display.nextPage());
   firstDraw = false;
 }
-
-static char lastBusWestRow[48] = "";
-static char lastBusEastRow[48] = "";
-static const char *lastRoute = "";
-static const char *lastRouteS = "";
 
 static void drawArrivals(const Arrivals &arrivals) {
   // Show the C as long as any C trains are coming; when none are (late
@@ -450,7 +480,7 @@ static void drawArrivals(const Arrivals &arrivals) {
 
   // Notices for the bottom of the side column. With several active, the
   // zone cycles through them on a fixed clock; a change of the shown one
-  // is a repaint like any other (partial refresh, no flash).
+  // is a repaint like any other (partial refresh, no flash; redraw-gated).
   Notice notes[MAX_NOTICES];
   int noteCount = mqttGetNotices(notes, MAX_NOTICES);
   Notice note = {};
@@ -459,12 +489,9 @@ static void drawArrivals(const Arrivals &arrivals) {
     note.idx = (millis() / NOTICE_ROTATE_MS) % noteCount;
     note.count = noteCount;
   }
-  static char lastNote[64] = "";
   char noteKey[64];
   snprintf(noteKey, sizeof(noteKey), "%s|%s|%d|%d|%d", note.title, note.text,
            note.pct, note.idx, note.count);
-  bool noteChanged = strcmp(noteKey, lastNote) != 0;
-  strcpy(lastNote, noteKey);
 
   // A mode flip gets a clean full refresh either way
   static bool lastCommute = false;
@@ -477,7 +504,6 @@ static void drawArrivals(const Arrivals &arrivals) {
   if (commute) {
     // Next three trains, e.g. "7,12,19" (worst case "22,28,34" still fits
     // the panel at the commute font size)
-    static char lastCommuteRow[16] = "";
     char row[16];
     int mins[3];
     int n = timesToMinutes(north, northCount, mins, 3);
@@ -487,11 +513,11 @@ static void drawArrivals(const Arrivals &arrivals) {
       pos += snprintf(row + pos, sizeof(row) - pos, "%s%d", i ? "," : "",
                       mins[i]);
 
-    if (!firstDraw && !noteChanged && strcmp(routeN, lastRoute) == 0 &&
-        strcmp(row, lastCommuteRow) == 0)
-      return;
-    strcpy(lastCommuteRow, row);
-    lastRoute = routeN;
+    char key[256];
+    snprintf(key, sizeof(key), "C|%s|%s|%s", routeN, row, noteKey);
+    if (!redrawDue(key)) return;
+    markDrawn(key);
+    LOGB("draw: commute %s", firstDraw ? "full" : "partial");
 
     if (firstDraw) display.setFullWindow();
     else display.setPartialWindow(0, 0, display.width(), display.height());
@@ -503,20 +529,12 @@ static void drawArrivals(const Arrivals &arrivals) {
     return;
   }
 
-  if (!firstDraw && !noteChanged && strcmp(routeN, lastRoute) == 0 &&
-      strcmp(routeS, lastRouteS) == 0 &&
-      strcmp(northRow, lastNorthRow) == 0 &&
-      strcmp(southRow, lastSouthRow) == 0 &&
-      strcmp(busWestRow, lastBusWestRow) == 0 &&
-      strcmp(busEastRow, lastBusEastRow) == 0)
-    return; // nothing changed, don't flash the panel
-
-  strcpy(lastNorthRow, northRow);
-  strcpy(lastSouthRow, southRow);
-  strcpy(lastBusWestRow, busWestRow);
-  strcpy(lastBusEastRow, busEastRow);
-  lastRoute = routeN;
-  lastRouteS = routeS;
+  char key[256];
+  snprintf(key, sizeof(key), "A|%s|%s|%s|%s|%s|%s|%s", routeN, routeS,
+           northRow, southRow, busWestRow, busEastRow, noteKey);
+  if (!redrawDue(key)) return; // unchanged, too soon, or not yet stable
+  markDrawn(key);
+  LOGB("draw: arrivals %s", firstDraw ? "full" : "partial");
 
   if (firstDraw) display.setFullWindow();
   else display.setPartialWindow(0, 0, display.width(), display.height());
@@ -600,7 +618,10 @@ static bool wifiEnsure() {
            (unsigned long)((now - downSince) / 1000), wifiLastReason,
            WiFi.localIP().toString().c_str());
       mqttOnWifiReconnect();
-      if (noticeDrawn) firstDraw = true; // repaint over the notice
+      if (noticeDrawn) { // repaint over the notice (the paused screen too)
+        firstDraw = true;
+        pauseShown = false;
+      }
       downSince = 0;
       noticeDrawn = false;
     }
@@ -715,13 +736,45 @@ void loop() {
 
   mqttLoop(); // cheap; keeps the broker connection alive between fetches
 
+  // Pause (mqtt.h): one static screen and no fetching until HA resumes us.
+  // While paused, the HOME key peeks at live arrivals for PEEK_MS instead of
+  // flipping to the hourly screen.
+  static bool peeking = false;
+  static uint32_t peekStart = 0;
+  bool pauseWanted = mqttGetPaused();
+  if (peeking && millis() - peekStart >= PEEK_MS) peeking = false;
+
   if (homeKeyPressed) {
     homeKeyPressed = false;
-    showHourly = !showHourly;
-    firstDraw = true; // mode flip gets a clean full refresh
-    LOGB("home key: %s", showHourly ? "hourly" : "arrivals");
-    if (showHourly) drawHourly();
-    else lastFetch = 0; // repaint arrivals with fresh data right away
+    if (pauseWanted) {
+      peeking = true;
+      peekStart = millis();
+      showHourly = false;
+      LOGB("home key: peek (paused)");
+    } else {
+      showHourly = !showHourly;
+      firstDraw = true; // mode flip gets a clean full refresh
+      LOGB("home key: %s", showHourly ? "hourly" : "arrivals");
+      if (showHourly) drawHourly();
+      else lastFetch = 0; // repaint arrivals with fresh data right away
+    }
+  }
+
+  if (pauseWanted && !peeking) {
+    if (!pauseShown) {
+      LOGB("paused: panel resting");
+      showHourly = false;
+      drawMessage("paused - HOME for trains");
+      pauseShown = true;
+    }
+    delay(250);
+    return;
+  }
+  if (pauseShown) { // resuming, or peeking: fresh data, clean full refresh
+    pauseShown = false;
+    firstDraw = true;
+    lastFetch = 0;
+    LOGB("%s", peeking ? "peek: live arrivals" : "resumed");
   }
 
   if (lastFetch != 0 && millis() - lastFetch < REFRESH_MS) {

@@ -51,3 +51,11 @@ int mqttGetNotices(Notice *out, int max);
 // ...]} (t = local hour label, c = HA condition, f = temp in F, p = precip
 // probability %). Invalid until the first message arrives.
 HourlyInfo mqttGetHourly();
+
+// Pause, to save panel refresh cycles (GDEY0579T93 is rated for 1M) when
+// nobody's looking: HA publishes "ON"/"OFF" retained on
+// transit-display/pause/set (an automation drives it: nights + away); the
+// device echoes it retained on transit-display/pause/state and exposes a
+// "Pause updates" switch via discovery. While paused the panel shows a
+// static message and stops fetching; the HOME key wakes it for a few minutes.
+bool mqttGetPaused();

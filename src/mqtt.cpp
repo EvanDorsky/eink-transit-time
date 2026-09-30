@@ -60,8 +60,10 @@ static HourlyInfo hourly = {};
 HourlyInfo mqttGetHourly() { return hourly; }
 
 static bool paused = false; // not persisted: the retained set topic restores it on connect
+static bool pauseBlank = false; // "BLANK": paused with an empty (white) panel
 
 bool mqttGetPaused() { return paused; }
+bool mqttPauseBlank() { return paused && pauseBlank; }
 
 static void saveCommuteCfg() {
   commutePrefs.putBool("en", commuteCfg.enabled);
@@ -165,9 +167,12 @@ static void mqttCallback(char *topic, byte *payload, unsigned int len) {
   }
 
   if (strcmp(topic, TOPIC_PAUSE_SET) == 0) {
-    bool p = strcasecmp(buf, "ON") == 0 || strcmp(buf, "1") == 0;
-    if (p != paused) LOGB("pause: %s", p ? "on" : "off");
+    bool blank = strcasecmp(buf, "BLANK") == 0;
+    bool p = blank || strcasecmp(buf, "ON") == 0 || strcmp(buf, "1") == 0;
+    if (p != paused || blank != pauseBlank)
+      LOGB("pause: %s", !p ? "off" : blank ? "blank" : "on");
     paused = p;
+    pauseBlank = blank;
     mqtt.publish(TOPIC_PAUSE_STATE, paused ? "ON" : "OFF", true);
     return;
   }

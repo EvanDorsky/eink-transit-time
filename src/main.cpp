@@ -371,9 +371,7 @@ static bool commuteActiveNow() {
 }
 
 static bool firstDraw = true;
-// Which paused screen is on the panel: 0 = none, PAUSE_MSG, or PAUSE_BLANK
-enum { PAUSE_MSG = 1, PAUSE_BLANK = 2 };
-static int pauseShown = 0;
+static bool pauseShown = false; // the blank paused panel is what's showing
 
 // Redraw gate for the arrivals/commute screens (see REDRAW_MIN_MS). `key` is
 // everything the screen shows. Call once per fetch cycle.
@@ -622,7 +620,7 @@ static bool wifiEnsure() {
       mqttOnWifiReconnect();
       if (noticeDrawn) { // repaint over the notice (the paused screen too)
         firstDraw = true;
-        pauseShown = 0;
+        pauseShown = false;
       }
       downSince = 0;
       noticeDrawn = false;
@@ -763,18 +761,17 @@ void loop() {
   }
 
   if (pauseWanted && !peeking) {
-    int want = mqttPauseBlank() ? PAUSE_BLANK : PAUSE_MSG;
-    if (pauseShown != want) { // also redraws when night <-> away switches
-      LOGB("paused: panel %s", want == PAUSE_BLANK ? "blank" : "resting");
+    if (!pauseShown) { // a paused panel is simply blank, no message
+      LOGB("paused: panel blank");
       showHourly = false;
-      drawMessage(want == PAUSE_BLANK ? "" : "paused - HOME for trains");
-      pauseShown = want;
+      drawMessage("");
+      pauseShown = true;
     }
     delay(250);
     return;
   }
   if (pauseShown) { // resuming, or peeking: fresh data, clean full refresh
-    pauseShown = 0;
+    pauseShown = false;
     firstDraw = true;
     lastFetch = 0;
     LOGB("%s", peeking ? "peek: live arrivals" : "resumed");

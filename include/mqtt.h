@@ -53,12 +53,10 @@ int mqttGetNotices(Notice *out, int max);
 HourlyInfo mqttGetHourly();
 
 // Pause, to save panel refresh cycles (GDEY0579T93 is rated for 1M) when
-// nobody's looking: HA publishes "ON"/"BLANK"/"OFF" retained on
+// nobody's looking: HA publishes "ON"/"OFF" retained on
 // transit-display/pause/set (an automation drives it: nights + away); the
 // device echoes it retained on transit-display/pause/state and exposes a
 // "Pause updates" switch via discovery. While paused the panel stops fetching
-// and shows a static "paused" message ("ON", the night pause) or nothing at
-// all ("BLANK", sent while nobody is home); either way the state topic reads ON.
-// The HOME key wakes it for a few minutes.
+// and is left blank (white, no message); "BLANK" is accepted as a synonym for
+// "ON". The HOME key wakes it for a few minutes.
 bool mqttGetPaused();
-bool mqttPauseBlank(); // paused, and the panel should be left empty

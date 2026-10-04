@@ -60,3 +60,15 @@ HourlyInfo mqttGetHourly();
 // and is left blank (white, no message); "BLANK" is accepted as a synonym for
 // "ON". The HOME key wakes it for a few minutes.
 bool mqttGetPaused();
+
+// Flight mode: the panel ranks routes to JFK instead of showing arrivals
+// (flight.h). HA (or anyone) publishes "ON"/"OFF" retained on
+// transit-display/flight/set; echoed on transit-display/flight/state and
+// exposed as a "Flight mode" switch. The EXIT button toggles it via
+// mqttSetFlight(), which republishes the retained set topic so the new state
+// survives reconnects. Flight mode overrides the pause.
+bool mqttGetFlight();
+void mqttSetFlight(bool on);
+// Waze driving minutes to JFK, pushed (retained) by HA on
+// transit-display/flight/uber; -1 until one arrives.
+int mqttGetUberMin();

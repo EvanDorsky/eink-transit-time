@@ -61,6 +61,24 @@ int main(int argc, char **argv) {
   } else if (argc >= 3 && strcmp(argv[1], "--message") == 0) {
     renderMessage(canvas, argv[2]);
     if (argc > 3) out = argv[3];
+  } else if (argc >= 2 && strcmp(argv[1], "--flight") == 0) {
+    // preview --flight ["label|min;label|min;..."] [out.pgm]
+    const char *spec = argc > 2 ? argv[2]
+                                : "{C} 7:51 {A} 7:58|46;Uber|48;"
+                                  "Walk {LIRR} 8:05|51;{C} 7:51 {LIRR} 8:05|51";
+    FlightRow rows[4] = {};
+    int n = 0;
+    char tmp[256];
+    snprintf(tmp, sizeof(tmp), "%s", spec);
+    for (char *tok = strtok(tmp, ";"); tok && n < 4; tok = strtok(NULL, ";")) {
+      char *bar = strchr(tok, '|');
+      if (!bar) continue;
+      *bar = 0;
+      snprintf(rows[n].label, sizeof(rows[n].label), "%s", tok);
+      rows[n++].minutes = atoi(bar + 1);
+    }
+    renderFlight(canvas, rows, n, &wx, &note);
+    if (argc > 3) out = argv[3];
   } else if (argc >= 3 && strcmp(argv[1], "--commute") == 0) {
     // preview --commute MINUTES [ROUTE] [out.pgm]
     const char *route = argc > 3 ? argv[3] : "C";

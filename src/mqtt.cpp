@@ -32,6 +32,11 @@ static const char *TOPIC_HOURLY = "transit-display/hourly";
 static const char *TOPIC_PAUSE_SET = "transit-display/pause/set";
 static const char *TOPIC_PAUSE_STATE = "transit-display/pause/state";
 
+// Flight mode (see mqtt.h)
+static const char *TOPIC_FLIGHT_SET = "transit-display/flight/set";
+static const char *TOPIC_FLIGHT_STATE = "transit-display/flight/state";
+static const char *TOPIC_FLIGHT_UBER = "transit-display/flight/uber";
+
 static WiFiClient mqttNet;
 static PubSubClient mqtt(mqttNet);
 static IPAddress brokerIp;
@@ -62,6 +67,21 @@ HourlyInfo mqttGetHourly() { return hourly; }
 static bool paused = false; // not persisted: the retained set topic restores it on connect
 
 bool mqttGetPaused() { return paused; }
+
+static bool flightOn = false; // restored from the retained set topic on connect
+static int uberMin = -1;      // Waze drive time to JFK from HA, -1 = unknown
+
+bool mqttGetFlight() { return flightOn; }
+int mqttGetUberMin() { return uberMin; }
+
+void mqttSetFlight(bool on) {
+  flightOn = on;
+  if (!mqtt.connected()) return;
+  // Retained on the set topic too, so a reconnect (or HA) doesn't revert a
+  // button toggle
+  mqtt.publish(TOPIC_FLIGHT_SET, on ? "ON" : "OFF", true);
+  mqtt.publish(TOPIC_FLIGHT_STATE, on ? "ON" : "OFF", true);
+}
 
 static void saveCommuteCfg() {
   commutePrefs.putBool("en", commuteCfg.enabled);
@@ -171,6 +191,21 @@ static void mqttCallback(char *topic, byte *payload, unsigned int len) {
     if (p != paused) LOGB("pause: %s", p ? "on" : "off");
     paused = p;
     mqtt.publish(TOPIC_PAUSE_STATE, paused ? "ON" : "OFF", true);
+    return;
+  }
+
+  if (strcmp(topic, TOPIC_FLIGHT_SET) == 0) {
+    bool on = strcasecmp(buf, "ON") == 0 || strcmp(buf, "1") == 0;
+    if (on != flightOn) LOGB("flight: %s", on ? "on" : "off");
+    flightOn = on;
+    mqtt.publish(TOPIC_FLIGHT_STATE, flightOn ? "ON" : "OFF", true);
+    return;
+  }
+
+  if (strcmp(topic, TOPIC_FLIGHT_UBER) == 0) {
+    char *end = nullptr;
+    long v = strtol(buf, &end, 10);
+    uberMin = (len > 0 && end && *end == '\0' && v >= 0 && v < 600) ? (int)v : -1;
     return;
   }
 
@@ -291,6 +326,15 @@ static void publishDiscovery() {
            TOPIC_PAUSE_STATE, TOPIC_PAUSE_SET, TOPIC_AVAIL, DEV_BLOCK);
   mqtt.publish("homeassistant/switch/transit_display/paused/config", payload,
                true);
+
+  // Flight mode switch (also toggled by the panel's EXIT button)
+  snprintf(payload, sizeof(payload),
+           "{\"uniq_id\":\"transit_display_flight\","
+           "\"name\":\"Flight mode\",\"icon\":\"mdi:airplane\","
+           "\"stat_t\":\"%s\",\"cmd_t\":\"%s\",\"avty_t\":\"%s\",%s}",
+           TOPIC_FLIGHT_STATE, TOPIC_FLIGHT_SET, TOPIC_AVAIL, DEV_BLOCK);
+  mqtt.publish("homeassistant/switch/transit_display/flight/config", payload,
+               true);
 }
 
 static bool resolveBroker() {
@@ -324,8 +368,11 @@ static bool mqttConnect() {
   mqtt.subscribe(TOPIC_NOTIFY);
   mqtt.subscribe(TOPIC_HOURLY);
   mqtt.subscribe(TOPIC_PAUSE_SET);
+  mqtt.subscribe(TOPIC_FLIGHT_SET);
+  mqtt.subscribe(TOPIC_FLIGHT_UBER);
   publishDiscovery();
   mqtt.publish(TOPIC_PAUSE_STATE, paused ? "ON" : "OFF", true);
+  mqtt.publish(TOPIC_FLIGHT_STATE, flightOn ? "ON" : "OFF", true);
   // retire the pre-split single "route" sensor (retained discovery config)
   mqtt.publish("homeassistant/sensor/transit_display/route/config", "", true);
   publishCommuteState();

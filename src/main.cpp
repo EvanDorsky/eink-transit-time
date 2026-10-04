@@ -13,6 +13,7 @@
 #include "secrets.h"
 #include "log.h"
 #include "mqtt.h"
+#include "flight.h"
 
 // Log to USB serial and a live UDP broadcast on port 5555 — listen with
 // `make udplog`. fmt string without trailing \n.
@@ -61,6 +62,18 @@ static const char *ROUTE_PRIMARY = "C";
 static const char *ROUTE_FALLBACK = "A";
 static const char *STOP_NORTH = "HOME_N"; // Manhattan-bound
 static const char *STOP_SOUTH = "HOME_S"; // Euclid Av-bound
+
+// Flight mode (flight.h). The ACE feed already carries the C from here to
+// transfer station and the Rockaway-branch A from transfer station to Howard Beach
+// (Lefferts-bound A's never list AIRPORT_STOP, so they drop out by themselves); the
+// LIRR feed is only fetched while flight mode is on.
+static const char *STOP_XFER_S = "XFER_S";
+static const char *STOP_HOWARD_BEACH_S = "AIRPORT_S";
+static const char *LIRR_URL =
+    "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/lirr%2Fgtfs-lirr";
+static const char *LIRR_XFER = "LIRR_HOME"; // transfer station
+static const char *LIRR_JAMAICA = "LIRR_JFK";
+static const uint32_t LIRR_REFRESH_MS = 30 * 1000;
 
 // The home bus stop, both directions; each stop serves B25 and B26
 static const char *BUS_URL_WEST = // downtown-bound
@@ -120,7 +133,12 @@ struct Arrivals {
 struct EntityCtx {
   transit_realtime_TripUpdate *tripUpdate;
   Arrivals *arrivals;
+  // flight mode: this trip's times at the stops we pair up (0 = not seen)
+  time_t tHere, tXfer, tHowardBeach;
 };
+
+// Latest per-trip pairs for flight mode, refreshed on every good decode
+static PairList flightC, flightA, flightLirr;
 
 static void addArrival(time_t *arr, size_t *count, time_t t) {
   if (*count < MAX_ARRIVALS) {
@@ -155,6 +173,10 @@ static bool stopTimeUpdateCb(pb_istream_t *stream, const pb_field_t *field,
   else if (stu.has_departure && stu.departure.has_time) t = stu.departure.time;
   if (t == 0) return true;
 
+  if (strcmp(stu.stop_id, STOP_SOUTH) == 0) ctx->tHere = t;
+  else if (strcmp(stu.stop_id, STOP_XFER_S) == 0) ctx->tXfer = t;
+  else if (strcmp(stu.stop_id, STOP_HOWARD_BEACH_S) == 0) ctx->tHowardBeach = t;
+
   Arrivals *a = ctx->arrivals;
   if (strcmp(stu.stop_id, STOP_NORTH) == 0) {
     if (isPrimary) addArrival(a->north, &a->northCount, t);
@@ -166,24 +188,86 @@ static bool stopTimeUpdateCb(pb_istream_t *stream, const pb_field_t *field,
   return true;
 }
 
+struct FeedCtx {
+  Arrivals *arrivals;
+  PairList *cPairs, *aPairs;
+};
+
 // FeedMessage.entity (repeated) — one call per FeedEntity
 static bool entityCb(pb_istream_t *stream, const pb_field_t *field,
                      void **arg) {
-  Arrivals *arrivals = (Arrivals *)*arg;
+  FeedCtx *fc = (FeedCtx *)*arg;
   transit_realtime_FeedEntity entity = transit_realtime_FeedEntity_init_default;
-  EntityCtx ctx = {&entity.trip_update, arrivals};
+  EntityCtx ctx = {&entity.trip_update, fc->arrivals, 0, 0, 0};
   entity.trip_update.stop_time_update.funcs.decode = &stopTimeUpdateCb;
   entity.trip_update.stop_time_update.arg = &ctx;
-  return pb_decode(stream, transit_realtime_FeedEntity_fields, &entity);
+  if (!pb_decode(stream, transit_realtime_FeedEntity_fields, &entity))
+    return false;
+  const char *route = entity.trip_update.trip.route_id;
+  if (strcmp(route, "C") == 0 && ctx.tHere && ctx.tXfer)
+    pairAdd(fc->cPairs, ctx.tHere, ctx.tXfer);
+  if (strcmp(route, "A") == 0 && ctx.tXfer && ctx.tHowardBeach)
+    pairAdd(fc->aPairs, ctx.tXfer, ctx.tHowardBeach);
+  return true;
 }
 
-static bool decodeFeed(const uint8_t *buf, size_t len, Arrivals *arrivals) {
+static bool decodeFeed(const uint8_t *buf, size_t len, Arrivals *arrivals,
+                       PairList *cPairs, PairList *aPairs) {
+  FeedCtx fc = {arrivals, cPairs, aPairs};
   transit_realtime_FeedMessage msg = transit_realtime_FeedMessage_init_default;
   msg.entity.funcs.decode = &entityCb;
-  msg.entity.arg = arrivals;
+  msg.entity.arg = &fc;
   pb_istream_t stream = pb_istream_from_buffer(buf, len);
   if (!pb_decode(&stream, transit_realtime_FeedMessage_fields, &msg)) {
     LOGB("pb_decode failed: %s", PB_GET_ERROR(&stream));
+    return false;
+  }
+  return true;
+}
+
+// LIRR feed (flight mode): eastbound transfer station -> Jamaica trips
+struct LirrCtx {
+  time_t tXfer, tJamaica;
+};
+
+static bool lirrStuCb(pb_istream_t *stream, const pb_field_t *field,
+                      void **arg) {
+  LirrCtx *ctx = (LirrCtx *)*arg;
+  transit_realtime_TripUpdate_StopTimeUpdate stu =
+      transit_realtime_TripUpdate_StopTimeUpdate_init_default;
+  if (!pb_decode(stream, transit_realtime_TripUpdate_StopTimeUpdate_fields,
+                 &stu))
+    return false;
+  time_t t = 0;
+  if (stu.has_departure && stu.departure.has_time) t = stu.departure.time;
+  else if (stu.has_arrival && stu.arrival.has_time) t = stu.arrival.time;
+  if (strcmp(stu.stop_id, LIRR_XFER) == 0) ctx->tXfer = t;
+  else if (strcmp(stu.stop_id, LIRR_JAMAICA) == 0) ctx->tJamaica = t;
+  return true;
+}
+
+static bool lirrEntityCb(pb_istream_t *stream, const pb_field_t *field,
+                         void **arg) {
+  PairList *out = (PairList *)*arg;
+  transit_realtime_FeedEntity entity = transit_realtime_FeedEntity_init_default;
+  LirrCtx ctx = {0, 0};
+  entity.trip_update.stop_time_update.funcs.decode = &lirrStuCb;
+  entity.trip_update.stop_time_update.arg = &ctx;
+  if (!pb_decode(stream, transit_realtime_FeedEntity_fields, &entity))
+    return false;
+  // eastbound only: Xfer before Jamaica
+  if (ctx.tXfer && ctx.tJamaica && ctx.tXfer < ctx.tJamaica)
+    pairAdd(out, ctx.tXfer, ctx.tJamaica);
+  return true;
+}
+
+static bool decodeLirr(const uint8_t *buf, size_t len, PairList *out) {
+  transit_realtime_FeedMessage msg = transit_realtime_FeedMessage_init_default;
+  msg.entity.funcs.decode = &lirrEntityCb;
+  msg.entity.arg = out;
+  pb_istream_t stream = pb_istream_from_buffer(buf, len);
+  if (!pb_decode(&stream, transit_realtime_FeedMessage_fields, &msg)) {
+    LOGB("lirr pb_decode failed: %s", PB_GET_ERROR(&stream));
     return false;
   }
   return true;
@@ -375,8 +459,8 @@ static bool pauseShown = false; // the blank paused panel is what's showing
 
 // Redraw gate for the arrivals/commute screens (see REDRAW_MIN_MS). `key` is
 // everything the screen shows. Call once per fetch cycle.
-static char drawnKey[256] = ""; // what's on the panel
-static char prevKey[256] = "";  // last cycle's key, for the stability check
+static char drawnKey[384] = ""; // what's on the panel
+static char prevKey[384] = "";  // last cycle's key, for the stability check
 static uint32_t lastDrawMs = 0;
 
 static bool redrawDue(const char *key) {
@@ -397,6 +481,18 @@ static void markDrawn(const char *key) {
 // press (with a crude debounce); loop() acts on it between fetches.
 static bool showHourly = false;
 static volatile bool homeKeyPressed = false;
+
+// CrowPanel EXIT button (GPIO1, active low): toggles flight mode
+#define EXIT_KEY 1
+static volatile bool exitKeyPressed = false;
+
+static void IRAM_ATTR onExitKey() {
+  static uint32_t last = 0;
+  uint32_t now = millis();
+  if (now - last < 300) return;
+  last = now;
+  exitKeyPressed = true;
+}
 
 static void IRAM_ATTR onHomeKey() {
   static uint32_t last = 0;
@@ -492,6 +588,40 @@ static void drawArrivals(const Arrivals &arrivals) {
   char noteKey[64];
   snprintf(noteKey, sizeof(noteKey), "%s|%s|%d|%d|%d", note.title, note.text,
            note.pct, note.idx, note.count);
+
+  // Flight mode replaces the arrivals/commute screens entirely
+  static bool lastFlight = false;
+  bool flight = mqttGetFlight();
+  if (flight != lastFlight) {
+    lastFlight = flight;
+    firstDraw = true;
+  }
+  if (flight) {
+    FlightInputs in = {&flightC, &flightA, &flightLirr, mqttGetUberMin()};
+    FlightOption opts[FLIGHT_OPTIONS];
+    int n = planFlight(in, time(nullptr), opts);
+    FlightRow rows[FLIGHT_OPTIONS];
+    char key[384];
+    size_t pos = snprintf(key, sizeof(key), "F|%s", noteKey);
+    for (int i = 0; i < n; i++) {
+      flightLabel(opts[i], rows[i].label, sizeof(rows[i].label));
+      rows[i].minutes = opts[i].totalMin;
+      if (pos < sizeof(key))
+        pos += snprintf(key + pos, sizeof(key) - pos, "|%s=%d", rows[i].label,
+                        rows[i].minutes);
+    }
+    if (!redrawDue(key)) return;
+    markDrawn(key);
+    LOGB("draw: flight %s (%d routes)", firstDraw ? "full" : "partial", n);
+    if (firstDraw) display.setFullWindow();
+    else display.setPartialWindow(0, 0, display.width(), display.height());
+    display.firstPage();
+    do {
+      renderFlight(display, rows, n, &wx, noteCount ? &note : nullptr);
+    } while (display.nextPage());
+    firstDraw = false;
+    return;
+  }
 
   // A mode flip gets a clean full refresh either way
   static bool lastCommute = false;
@@ -690,6 +820,8 @@ void setup() {
 
   pinMode(HOME_KEY, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(HOME_KEY), onHomeKey, FALLING);
+  pinMode(EXIT_KEY, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(EXIT_KEY), onExitKey, FALLING);
 
   SPI.begin(EPD_SCK, -1, EPD_MOSI, EPD_CS);
   display.init(115200);
@@ -760,7 +892,18 @@ void loop() {
     }
   }
 
-  if (pauseWanted && !peeking) {
+  if (exitKeyPressed) {
+    exitKeyPressed = false;
+    bool on = !mqttGetFlight();
+    mqttSetFlight(on);
+    LOGB("exit key: flight %s", on ? "on" : "off");
+    showHourly = false;
+    firstDraw = true;
+    lastFetch = 0; // repaint with fresh data right away
+  }
+
+  // Flight mode overrides the pause (a 5am flight is inside the night window)
+  if (pauseWanted && !peeking && !mqttGetFlight()) {
     if (!pauseShown) { // a paused panel is simply blank, no message
       LOGB("paused: panel blank");
       showHourly = false;
@@ -785,8 +928,30 @@ void loop() {
 
   Arrivals arrivals;
   memset(&arrivals, 0, sizeof(arrivals));
-  bool subwayOk =
-      fetchUrl(FEED_URL) && decodeFeed(feedSink.buf, feedSink.len, &arrivals);
+  PairList cPairs = {}, aPairs = {};
+  bool subwayOk = fetchUrl(FEED_URL) &&
+                  decodeFeed(feedSink.buf, feedSink.len, &arrivals, &cPairs,
+                             &aPairs);
+  if (subwayOk) {
+    flightC = cPairs;
+    flightA = aPairs;
+  }
+
+  // LIRR only while flight mode is on, on its own 30 s timer (a turn-on
+  // fetches immediately)
+  static uint32_t lastLirrFetch = 0;
+  static bool lirrFresh = false;
+  if (!mqttGetFlight()) {
+    lirrFresh = false;
+  } else if (!lirrFresh || millis() - lastLirrFetch >= LIRR_REFRESH_MS) {
+    lastLirrFetch = millis();
+    PairList lirr = {};
+    if (fetchUrl(LIRR_URL) && decodeLirr(feedSink.buf, feedSink.len, &lirr)) {
+      if (!lirrFresh) LOGB("lirr: %d eastbound trains via Xfer", lirr.n);
+      flightLirr = lirr;
+      lirrFresh = true;
+    }
+  }
 
   // Buses on their own 30s cadence; between fetches reuse the cached epochs
   // (minutes-away is recomputed from them every cycle, so nothing goes stale)

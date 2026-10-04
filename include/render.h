@@ -41,6 +41,15 @@ void renderCommute(Adafruit_GFX &gfx, const char *routeLetter,
                    const Notice *note);
 void renderMessage(Adafruit_GFX &gfx, const char *msg);
 
+// Flight mode: up to four ranked routes to JFK. `label` uses route tokens
+// ({C}, {A}, {LIRR}) drawn as badges; `minutes` is the total trip time.
+struct FlightRow {
+  char label[48];
+  int minutes;
+};
+void renderFlight(Adafruit_GFX &gfx, const FlightRow *rows, int count,
+                  const WeatherInfo *wx, const Notice *note);
+
 // Hourly outlook screen (toggled with the HOME key): the next HOURLY_N hours
 // as time labels, condition icons, a temperature line and precipitation
 // probability bars. Pushed from HA on transit-display/hourly.

@@ -1,4 +1,6 @@
 #include "render.h"
+#include <stdio.h>
+#include <string.h>
 #include "fonts/HelveticaBold11pt7b.h"
 #include "fonts/HelveticaBold14pt7b.h"
 #include "fonts/HelveticaBold20pt7b.h"
@@ -275,15 +277,10 @@ static void drawSideColumn(Adafruit_GFX &gfx, const WeatherInfo *wx,
   drawNotice(gfx, note, cx);
 }
 
-// Left label plus big right-aligned minute numbers with a small "min"
-// underneath, like the real countdown clocks
-static void printArrivalRow(Adafruit_GFX &gfx, const char *label,
-                            const char *nums, int16_t baselineY,
-                            int16_t rightMargin) {
-  gfx.setFont(&HelveticaBold26pt7b);
-  gfx.setCursor(LABEL_X, baselineY);
-  gfx.print(label);
-
+// Big right-aligned minute numbers with a small "min" at the margin, like
+// the real countdown clocks
+static void printMinutesRight(Adafruit_GFX &gfx, const char *nums,
+                              int16_t baselineY, int16_t rightMargin) {
   if (!nums[0]) return;
   int16_t tbx, tby;
   uint16_t tbw, tbh;
@@ -299,6 +296,16 @@ static void printArrivalRow(Adafruit_GFX &gfx, const char *label,
   gfx.getTextBounds(nums, 0, 0, &tbx, &tby, &tbw, &tbh);
   gfx.setCursor(minX - 8 - tbw - tbx, baselineY);
   gfx.print(nums);
+}
+
+// Left label plus the right-aligned minutes
+static void printArrivalRow(Adafruit_GFX &gfx, const char *label,
+                            const char *nums, int16_t baselineY,
+                            int16_t rightMargin) {
+  gfx.setFont(&HelveticaBold26pt7b);
+  gfx.setCursor(LABEL_X, baselineY);
+  gfx.print(label);
+  printMinutesRight(gfx, nums, baselineY, rightMargin);
 }
 
 void renderArrivals(Adafruit_GFX &gfx, const char *routeNorth,
@@ -377,6 +384,93 @@ void renderCommute(Adafruit_GFX &gfx, const char *routeLetter,
   gfx.setCursor(left + (right - left - (int16_t)tbw) / 2 - tbx, baseline);
   gfx.print(text);
 
+  drawSideColumn(gfx, wx, note);
+}
+
+// ---- flight mode ------------------------------------------------------------
+// Ranked routes to JFK, fastest first: each row is the trains to catch, drawn
+// from a token label ("{C} 7:51 {LIRR} 8:05": {C}/{A} = subway bullet,
+// {LIRR} = LIRR badge, anything else = text), with the total trip time in the
+// usual right-aligned "NN min" slot. Same side column as the other modes.
+
+static int16_t drawLirrBadge(Adafruit_GFX &gfx, int16_t x, int16_t cy) {
+  gfx.setFont(&HelveticaBold14pt7b);
+  int16_t tbx, tby;
+  uint16_t tbw, tbh;
+  gfx.getTextBounds("LIRR", 0, 0, &tbx, &tby, &tbw, &tbh);
+  const int16_t w = tbw + 18, h = 40;
+  gfx.fillRoundRect(x, cy - h / 2, w, h, 8, K_BLACK);
+  gfx.setTextColor(K_WHITE);
+  gfx.setCursor(x + (w - tbw) / 2 - tbx, cy - tbh / 2 - tby);
+  gfx.print("LIRR");
+  gfx.setTextColor(K_BLACK);
+  return w;
+}
+
+static void drawFlightLabel(Adafruit_GFX &gfx, const char *label, int16_t x,
+                            int16_t baselineY) {
+  const int16_t cy = baselineY - 18; // optical centre of the 26pt digits
+  const char *p = label;
+  while (*p) {
+    if (*p == ' ') {
+      x += 12;
+      if (p > label && p[1] == '{') x += 14; // breathing room before a badge
+      p++;
+      continue;
+    }
+    if (*p == '{') {
+      const char *end = strchr(p, '}');
+      if (!end) break;
+      char tok[8];
+      size_t len = (size_t)(end - p - 1) < sizeof(tok) - 1
+                       ? (size_t)(end - p - 1)
+                       : sizeof(tok) - 1;
+      memcpy(tok, p + 1, len);
+      tok[len] = 0;
+      if (strcmp(tok, "LIRR") == 0) {
+        x += drawLirrBadge(gfx, x, cy);
+      } else {
+        const int16_t r = 22;
+        drawRouteBullet(gfx, tok, x + r, cy, r);
+        x += 2 * r;
+      }
+      p = end + 1;
+      continue;
+    }
+    // plain text up to the next space or token
+    char word[24];
+    size_t n = 0;
+    while (p[n] && p[n] != ' ' && p[n] != '{' && n < sizeof(word) - 1) n++;
+    memcpy(word, p, n);
+    word[n] = 0;
+    gfx.setFont(&HelveticaBold26pt7b);
+    gfx.setCursor(x, baselineY);
+    gfx.print(word);
+    int16_t tbx, tby;
+    uint16_t tbw, tbh;
+    gfx.getTextBounds(word, 0, 0, &tbx, &tby, &tbw, &tbh);
+    x += tbx + tbw;
+    p += n;
+  }
+}
+
+void renderFlight(Adafruit_GFX &gfx, const FlightRow *rows, int count,
+                  const WeatherInfo *wx, const Notice *note) {
+  gfx.fillScreen(K_WHITE);
+  gfx.setTextColor(K_BLACK);
+  int16_t margin = (wx && wx->valid) ? WX_COL_W : 16;
+
+  if (count <= 0) {
+    gfx.setFont(&HelveticaBold22pt7b);
+    gfx.setCursor(20, gfx.height() / 2 + 10);
+    gfx.print("No routes to JFK right now");
+  }
+  for (int i = 0; i < count && i < 4; i++) {
+    drawFlightLabel(gfx, rows[i].label, 20, ROW_BASELINES[i]);
+    char nums[8];
+    snprintf(nums, sizeof(nums), "%d", rows[i].minutes);
+    printMinutesRight(gfx, nums, ROW_BASELINES[i], margin);
+  }
   drawSideColumn(gfx, wx, note);
 }
 

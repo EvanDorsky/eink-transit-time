@@ -8,13 +8,13 @@
 // tested on the host with real feed data.
 //
 // Routes:
-//   WALK_LIRR  walk to transfer station LIRR -> LIRR to Jamaica -> AirTrain
-//   C_LIRR     C from home station to transfer station, walk to the LIRR
-//              -> LIRR to Jamaica -> AirTrain
-//   C_A        C to transfer station, transfer to a Howard Beach-bound A
+//   WALK_LIRR  walk to the home LIRR station -> LIRR to Jamaica -> AirTrain
+//   C_LIRR     C from the home station to the transfer station, walk to its
+//              LIRR platform -> LIRR to Jamaica -> AirTrain
+//   C_A        C to the transfer station, transfer to a Howard Beach-bound A
 //              -> AirTrain from Howard Beach
 //   UBER       pickup wait + Waze driving time (pushed from HA)
-// A route that isn't running (e.g. no LIRR service trains at Xfer on
+// A route that isn't running (e.g. no LIRR service at the home station on
 // weekends) simply produces no option.
 
 // One train trip seen at two stops: departure from the first, arrival at the
@@ -47,7 +47,7 @@ static const int FLIGHT_OPTIONS = 4;
 struct FlightInputs {
   const PairList *cTrain; // C: home station dep -> transfer station arr
   const PairList *aTrain; // A: transfer station dep -> Howard Beach arr
-  const PairList *lirr;   // LIRR: transfer station dep -> Jamaica arr
+  const PairList *lirr;   // LIRR: home LIRR station dep -> Jamaica arr
   int uberDriveMin;       // Waze driving minutes, -1 if unknown
 };
 

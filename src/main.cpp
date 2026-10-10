@@ -56,32 +56,36 @@ __attribute__((format(printf, 1, 2))) void logLine(const char *fmt, ...) {
 
 static const char *FEED_URL =
     "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace";
+// Stop ids are site config, injected at build time from environment
+// variables by scripts/site_env.py (see site.env.example), so the location
+// isn't in the repo.
+//
 // Late nights the C stops running and the A runs local past this stop, so
-// A trains only appear at HOME_STOP when they're actually stopping here
+// A trains only appear at the home stop when they're actually stopping here
 static const char *ROUTE_PRIMARY = "C";
 static const char *ROUTE_FALLBACK = "A";
-static const char *STOP_NORTH = "HOME_N"; // Manhattan-bound
-static const char *STOP_SOUTH = "HOME_S"; // Euclid Av-bound
+static const char *STOP_NORTH = TRANSIT_SUBWAY_STOP "N"; // Manhattan-bound
+static const char *STOP_SOUTH = TRANSIT_SUBWAY_STOP "S"; // Euclid Av-bound
 
-// Flight mode (flight.h). The ACE feed already carries the C from here to
-// transfer station and the Rockaway-branch A from transfer station to Howard Beach
-// (Lefferts-bound A's never list AIRPORT_STOP, so they drop out by themselves); the
-// LIRR feed is only fetched while flight mode is on.
-static const char *STOP_XFER_S = "XFER_S";
-static const char *STOP_HOWARD_BEACH_S = "AIRPORT_S";
+// Flight mode (flight.h). The ACE feed already carries the C from here to the
+// transfer station and the Rockaway-branch A from there to the AirTrain
+// (Lefferts-bound A's never list the AirTrain stop, so they drop out by
+// themselves); the LIRR feed is only fetched while flight mode is on.
+static const char *STOP_XFER_S = TRANSIT_XFER_STOP;
+static const char *STOP_AIRPORT_S = TRANSIT_AIRPORT_SUBWAY_STOP;
 static const char *LIRR_URL =
     "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/lirr%2Fgtfs-lirr";
-static const char *LIRR_XFER = "LIRR_HOME"; // transfer station
-static const char *LIRR_JAMAICA = "LIRR_JFK";
+static const char *LIRR_ORIGIN = TRANSIT_LIRR_ORIGIN_STOP;
+static const char *LIRR_JFK = TRANSIT_LIRR_JFK_STOP;
 static const uint32_t LIRR_REFRESH_MS = 30 * 1000;
 
-// The home bus stop, both directions; each stop serves B25 and B26
+// The home bus stop, both directions
 static const char *BUS_URL_WEST = // downtown-bound
     "https://bustime.mta.info/api/siri/stop-monitoring.json?key=" BUSTIME_API_KEY
-    "&MonitoringRef=BUS_STOP_W&MaximumStopVisits=8";
+    "&MonitoringRef=" TRANSIT_BUS_STOP_WEST "&MaximumStopVisits=8";
 static const char *BUS_URL_EAST =
     "https://bustime.mta.info/api/siri/stop-monitoring.json?key=" BUSTIME_API_KEY
-    "&MonitoringRef=BUS_STOP_E&MaximumStopVisits=8";
+    "&MonitoringRef=" TRANSIT_BUS_STOP_EAST "&MaximumStopVisits=8";
 // Subway feed is keyless and cheap to poll; 5s keeps worst-case phase lag
 // small. BusTime carries the API key and MTA guidance is ~30s polling, so
 // buses fetch on their own slower timer (cached epochs still count down
@@ -134,7 +138,7 @@ struct EntityCtx {
   transit_realtime_TripUpdate *tripUpdate;
   Arrivals *arrivals;
   // flight mode: this trip's times at the stops we pair up (0 = not seen)
-  time_t tHere, tXfer, tHowardBeach;
+  time_t tHere, tXfer, tAirport;
 };
 
 // Latest per-trip pairs for flight mode, refreshed on every good decode
@@ -175,7 +179,7 @@ static bool stopTimeUpdateCb(pb_istream_t *stream, const pb_field_t *field,
 
   if (strcmp(stu.stop_id, STOP_SOUTH) == 0) ctx->tHere = t;
   else if (strcmp(stu.stop_id, STOP_XFER_S) == 0) ctx->tXfer = t;
-  else if (strcmp(stu.stop_id, STOP_HOWARD_BEACH_S) == 0) ctx->tHowardBeach = t;
+  else if (strcmp(stu.stop_id, STOP_AIRPORT_S) == 0) ctx->tAirport = t;
 
   Arrivals *a = ctx->arrivals;
   if (strcmp(stu.stop_id, STOP_NORTH) == 0) {
@@ -206,8 +210,8 @@ static bool entityCb(pb_istream_t *stream, const pb_field_t *field,
   const char *route = entity.trip_update.trip.route_id;
   if (strcmp(route, "C") == 0 && ctx.tHere && ctx.tXfer)
     pairAdd(fc->cPairs, ctx.tHere, ctx.tXfer);
-  if (strcmp(route, "A") == 0 && ctx.tXfer && ctx.tHowardBeach)
-    pairAdd(fc->aPairs, ctx.tXfer, ctx.tHowardBeach);
+  if (strcmp(route, "A") == 0 && ctx.tXfer && ctx.tAirport)
+    pairAdd(fc->aPairs, ctx.tXfer, ctx.tAirport);
   return true;
 }
 
@@ -225,9 +229,9 @@ static bool decodeFeed(const uint8_t *buf, size_t len, Arrivals *arrivals,
   return true;
 }
 
-// LIRR feed (flight mode): eastbound transfer station -> Jamaica trips
+// LIRR feed (flight mode): eastbound home station -> AirTrain trips
 struct LirrCtx {
-  time_t tXfer, tJamaica;
+  time_t tXfer, tJfk;
 };
 
 static bool lirrStuCb(pb_istream_t *stream, const pb_field_t *field,
@@ -241,8 +245,8 @@ static bool lirrStuCb(pb_istream_t *stream, const pb_field_t *field,
   time_t t = 0;
   if (stu.has_departure && stu.departure.has_time) t = stu.departure.time;
   else if (stu.has_arrival && stu.arrival.has_time) t = stu.arrival.time;
-  if (strcmp(stu.stop_id, LIRR_XFER) == 0) ctx->tXfer = t;
-  else if (strcmp(stu.stop_id, LIRR_JAMAICA) == 0) ctx->tJamaica = t;
+  if (strcmp(stu.stop_id, LIRR_ORIGIN) == 0) ctx->tXfer = t;
+  else if (strcmp(stu.stop_id, LIRR_JFK) == 0) ctx->tJfk = t;
   return true;
 }
 
@@ -255,9 +259,9 @@ static bool lirrEntityCb(pb_istream_t *stream, const pb_field_t *field,
   entity.trip_update.stop_time_update.arg = &ctx;
   if (!pb_decode(stream, transit_realtime_FeedEntity_fields, &entity))
     return false;
-  // eastbound only: Xfer before Jamaica
-  if (ctx.tXfer && ctx.tJamaica && ctx.tXfer < ctx.tJamaica)
-    pairAdd(out, ctx.tXfer, ctx.tJamaica);
+  // eastbound only: home station before the AirTrain
+  if (ctx.tXfer && ctx.tJfk && ctx.tXfer < ctx.tJfk)
+    pairAdd(out, ctx.tXfer, ctx.tJfk);
   return true;
 }
 
@@ -947,7 +951,7 @@ void loop() {
     lastLirrFetch = millis();
     PairList lirr = {};
     if (fetchUrl(LIRR_URL) && decodeLirr(feedSink.buf, feedSink.len, &lirr)) {
-      if (!lirrFresh) LOGB("lirr: %d eastbound trains via Xfer", lirr.n);
+      if (!lirrFresh) LOGB("lirr: %d eastbound trains", lirr.n);
       flightLirr = lirr;
       lirrFresh = true;
     }

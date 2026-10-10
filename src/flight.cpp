@@ -3,18 +3,16 @@
 #include <stdio.h>
 #include <string.h>
 
-// Leg times, minutes. Walks are from a pedestrian router (OSRM foot,
-// 2026-10-04) plus time to reach the platform:
-//   home -> home station C   walk   -> 5
-//   home -> transfer station LIRR      walk  -> 21
-//   transfer station A/C -> LIRR        walk   -> 9 (up out of
-//                                  the subway, up to the elevated platform)
-// The C -> A change at transfer station is same-station, so it gets no extra time
-// beyond the A departing after the C arrives. AirTrain has no live data:
-// a fixed walk + wait + ride to the terminals from each station.
+// Leg times, minutes, for this site. Walks are from a pedestrian router plus
+// time to reach the platform: home -> C station, home -> LIRR station, and
+// the transfer station's A/C platform -> its LIRR platform (up out of the
+// subway, up to the elevated platform). The C -> A change at the transfer
+// station is same-platform, so it gets no extra time beyond the A departing
+// after the C arrives. AirTrain has no live data: a fixed walk + wait + ride
+// to the terminals from each station.
 static const int WALK_HOME_C_MIN = 5;
 static const int WALK_HOME_LIRR_MIN = 21;
-static const int WALK_XFER_XFER_MIN = 9;
+static const int WALK_XFER_MIN = 9;
 static const int AIRTRAIN_JAMAICA_MIN = 14;
 static const int AIRTRAIN_HOWARD_BEACH_MIN = 12;
 static const int UBER_PICKUP_MIN = 5;
@@ -54,7 +52,7 @@ int planFlight(const FlightInputs &in, time_t now,
     out[n++] = {FR_WALK_LIRR, minutesUp(jfk - now), l->from, 0};
   }
 
-  // C to Xfer, then either the LIRR or the A. Each C we can reach is
+  // C to the transfer station, then either the LIRR or the A. Each C we can reach is
   // tried; the earliest JFK arrival wins (first C achieving it on a tie).
   bool haveCL = false, haveCA = false;
   FlightOption bestCL = {}, bestCA = {};
@@ -65,7 +63,7 @@ int planFlight(const FlightInputs &in, time_t now,
       if (c.from < now + WALK_HOME_C_MIN * 60 || c.to <= c.from) continue;
 
       if (const TripPair *l =
-              firstFrom(in.lirr, c.to + WALK_XFER_XFER_MIN * 60)) {
+              firstFrom(in.lirr, c.to + WALK_XFER_MIN * 60)) {
         time_t jfk = l->to + AIRTRAIN_JAMAICA_MIN * 60;
         if (!haveCL || jfk < bestCLjfk ||
             (jfk == bestCLjfk && c.from < bestCL.leg1)) {

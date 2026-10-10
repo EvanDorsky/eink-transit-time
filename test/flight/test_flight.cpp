@@ -19,10 +19,10 @@ int main() {
   pairAdd(&c, m(4), m(6));
   pairAdd(&c, m(8), m(10));
   pairAdd(&c, m(20), m(22));
-  // A from Xfer: +12, +30; 22 min to Howard Beach
+  // A from the transfer stn: +12, +30; 22 min to Howard Beach
   pairAdd(&a, m(12), m(34));
   pairAdd(&a, m(30), m(52));
-  // LIRR from Xfer: +18, +25, +45; 12 min to Jamaica
+  // LIRR from home stn: +18, +25, +45; 12 min to Jamaica
   pairAdd(&l, m(18), m(30));
   pairAdd(&l, m(25), m(37));
   pairAdd(&l, m(45), m(57));
@@ -38,7 +38,7 @@ int main() {
     case FR_WALK_LIRR: // walk 21 -> first LIRR >= +21 is +25 -> Jamaica +37 -> +14 = 51
       check(o[i].leg1 == m(25) && o[i].totalMin == 51, "walk+LIRR catches the +25 LIRR, 51 min");
       break;
-    case FR_C_LIRR: // C +8 -> Xfer +10 -> +9 walk = +19 -> LIRR +25 -> 51 (the +4 C is unreachable)
+    case FR_C_LIRR: // C +8 -> xfer +10 -> +9 walk = +19 -> LIRR +25 -> 51 (the +4 C is unreachable)
       check(o[i].leg1 == m(8) && o[i].leg2 == m(25) && o[i].totalMin == 51, "C+LIRR: C +8, LIRR +25, 51 min");
       break;
     case FR_C_A: // C +8 -> +10 -> A +12 -> HB +34 -> +12 = 46
@@ -50,7 +50,7 @@ int main() {
     }
   }
 
-  // C/LIRR misaligned: C arrives Xfer +10, walk -> +19, the +18 LIRR is missed
+  // C/LIRR misaligned: C arrives at the xfer stn +10, walk -> +19, the +18 LIRR is missed
   PairList l2 = {};
   pairAdd(&l2, m(18), m(30));
   pairAdd(&l2, m(48), m(60));

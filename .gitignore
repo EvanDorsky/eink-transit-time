@@ -8,3 +8,5 @@ include/fonts
 host/build
 
 preview.png
+site.env
+*.pgm

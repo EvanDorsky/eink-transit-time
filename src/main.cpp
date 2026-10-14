@@ -108,6 +108,14 @@ static const uint32_t NOTICE_ROTATE_MS = 15 * 1000;
 // events (weather, commute flip, HOME key, resume) still draw immediately.
 static const uint32_t REDRAW_MIN_MS = 60 * 1000;
 static const uint32_t REDRAW_MAX_WAIT_MS = 30 * 1000;
+// Commute mode is for walking out the door, where a minute-old number misses
+// trains: redraw a changed screen within 10 s instead. It's one row of three
+// countdowns for a few weekday-morning hours (and the panel is paused once
+// you've left), so the extra refreshes are a small share of the budget.
+static const uint32_t COMMUTE_REDRAW_MIN_MS = 10 * 1000;
+static const uint32_t COMMUTE_REDRAW_MAX_WAIT_MS = 10 * 1000;
+// A predicted arrival this far in the past is a stuck trip, not a late train
+static const time_t LATE_TRAIN_GRACE_S = 3 * 60;
 // While paused (mqtt.h), the HOME key shows live arrivals for this long
 static const uint32_t PEEK_MS = 5 * 60 * 1000;
 static const size_t FEED_BUF_CAP = 1024 * 1024;
@@ -423,7 +431,13 @@ static int timesToMinutes(const time_t *arr, size_t count, int *mins,
   time_t now = time(nullptr);
   int n = 0;
   for (size_t i = 0; i < count && n < maxOut; i++) {
-    if (sorted[i] < now - 30) continue; // already left
+    // The feed drops a trip's stop once the train has actually left it, so
+    // a time still listed here is a train that hasn't come yet, even if its
+    // prediction has slid into the past (it's running late). Show it as 0
+    // instead of hiding it; hiding it promoted the next train ("5") while
+    // the late one was pulling in. Only a time stuck well in the past is
+    // treated as a ghost trip and skipped.
+    if (sorted[i] < now - LATE_TRAIN_GRACE_S) continue;
     // floor, not round: "6" promises at least 6 minutes. Rounding to
     // nearest showed "7" for a train 6.5 min out — enough to miss it.
     time_t d = sorted[i] - now;
@@ -467,14 +481,15 @@ static char drawnKey[384] = ""; // what's on the panel
 static char prevKey[384] = "";  // last cycle's key, for the stability check
 static uint32_t lastDrawMs = 0;
 
-static bool redrawDue(const char *key) {
+static bool redrawDue(const char *key, uint32_t minMs = REDRAW_MIN_MS,
+                      uint32_t maxWaitMs = REDRAW_MAX_WAIT_MS) {
   bool stable = strcmp(key, prevKey) == 0;
   snprintf(prevKey, sizeof(prevKey), "%s", key);
   if (firstDraw) return true; // full-refresh events never wait
   if (strcmp(key, drawnKey) == 0) return false;
   uint32_t since = millis() - lastDrawMs;
-  if (since < REDRAW_MIN_MS) return false;
-  return stable || since >= REDRAW_MIN_MS + REDRAW_MAX_WAIT_MS;
+  if (since < minMs) return false;
+  return stable || since >= minMs + maxWaitMs;
 }
 
 static void markDrawn(const char *key) {
@@ -649,7 +664,8 @@ static void drawArrivals(const Arrivals &arrivals) {
 
     char key[256];
     snprintf(key, sizeof(key), "C|%s|%s|%s", routeN, row, noteKey);
-    if (!redrawDue(key)) return;
+    if (!redrawDue(key, COMMUTE_REDRAW_MIN_MS, COMMUTE_REDRAW_MAX_WAIT_MS))
+      return;
     markDrawn(key);
     LOGB("draw: commute %s", firstDraw ? "full" : "partial");
 

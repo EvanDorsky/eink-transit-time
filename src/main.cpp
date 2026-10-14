@@ -108,12 +108,15 @@ static const uint32_t NOTICE_ROTATE_MS = 15 * 1000;
 // events (weather, commute flip, HOME key, resume) still draw immediately.
 static const uint32_t REDRAW_MIN_MS = 60 * 1000;
 static const uint32_t REDRAW_MAX_WAIT_MS = 30 * 1000;
-// Commute mode is for walking out the door, where a minute-old number misses
-// trains: redraw a changed screen within 10 s instead. It's one row of three
-// countdowns for a few weekday-morning hours (and the panel is paused once
-// you've left), so the extra refreshes are a small share of the budget.
-static const uint32_t COMMUTE_REDRAW_MIN_MS = 10 * 1000;
-static const uint32_t COMMUTE_REDRAW_MAX_WAIT_MS = 10 * 1000;
+// Commute mode is for walking out the door, where a stale number misses
+// trains: the feed is polled every REFRESH_MS (5 s, unsynced with MTA's own
+// update rate) and the screen redraws on the first fetch whose times differ
+// from what's shown, with no minimum gap or stability wait. Unchanged
+// fetches never redraw. It's one row of three countdowns for a few
+// weekday-morning hours (and the panel is paused once you've left), so the
+// extra refreshes are a small share of the budget.
+static const uint32_t COMMUTE_REDRAW_MIN_MS = 0;
+static const uint32_t COMMUTE_REDRAW_MAX_WAIT_MS = 0;
 // A predicted arrival this far in the past is a stuck trip, not a late train
 static const time_t LATE_TRAIN_GRACE_S = 3 * 60;
 // While paused (mqtt.h), the HOME key shows live arrivals for this long

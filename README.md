@@ -1,6 +1,6 @@
 # eink-transit-time
 
-NYC subway + bus arrival board on an Elecrow CrowPanel 5.79" e-paper (ESP32-S3). Pulls MTA GTFS-realtime (ACE feed, LIRR in flight mode) and BusTime. On its own it shows arrivals; weather, notices, the hourly screen and standby come from Home Assistant over MQTT (see [Home Assistant](#home-assistant)).
+NYC subway + bus arrival board on an Elecrow CrowPanel 5.79" e-paper (ESP32-S3). Pulls MTA GTFS-realtime (ACE feed, LIRR in flight mode) and BusTime, plus weather and rain alerts from [Open-Meteo](https://open-meteo.com) when you give it a location. Works standalone; Home Assistant is optional (see [Home Assistant](#home-assistant)).
 
 ## Setup
 
@@ -54,16 +54,21 @@ All site config comes from env vars, never the repo. `cp site.env.example site.e
 - **Stop ids (required).** The build fails on any missing/invalid one.
   - Subway / LIRR: GTFS stop ids from MTA static GTFS `stops.txt`. `TRANSIT_SUBWAY_STOP` is the parent id; `N`/`S` are appended.
   - Bus: BusTime `MonitoringRef` stop codes (bustime.mta.info).
+- **Location, for weather (optional, but no weather without it).** `TRANSIT_LAT` / `TRANSIT_LON`, e.g. `40.71` / `-74.01`; two decimals (~1 km) is plenty. Leave them blank and the display shows no weather icon, high/low, rain alert or hourly screen; the build prints a notice saying so.
 - **Line and wording (optional).** The subway feed, primary/fallback route, row labels and bus badge default to this display's (C/A on the ACE feed; see `include/site.h`). Set the matching `TRANSIT_*` vars in `site.env` to change them; any subway route letter or number works.
 
 Flight mode (`src/flight.cpp`) is the one site-specific part left in code: it plans specific routes to JFK (C/A to the AirTrain, or the LIRR to Jamaica) with fixed walk and transfer times.
 
 ## Home Assistant
 
-Optional. The display registers its sensors and controls (commute mode, standby, flight mode) through MQTT discovery; HA feeds it weather, notices and the hourly forecast. [AGENTS.md](AGENTS.md) is the setup guide.
+Optional. The display registers its sensors and controls (commute mode, standby, flight mode) through MQTT discovery, and HA can push notices to its side column. [AGENTS.md](AGENTS.md) is the setup guide.
+
+## Credits
+
+Weather data by [Open-Meteo.com](https://open-meteo.com/) ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)). Open-Meteo is free for non-commercial use with no API key; the display makes about 100 requests a day.
 
 ## Dev
 
 - `make preview`: renders the screen on the host to `preview.png` (`NORTH=3,8 SOUTH=5 BUSW=7 BUSE=4 ROUTE=C` override the sample data; `host/preview.cpp` also has `--commute`, `--flight`, `--hourly` and `--message` modes, and `WX_*`/`NOTE_*` env vars for the side column).
-- Flight planner test: see the command at the top of `test/flight/test_flight.cpp`.
+- Host tests: the commands are at the top of `test/flight/test_flight.cpp` (flight planner) and `test/weather/test_weather.cpp` (Open-Meteo parser).
 - `make symbols`: `compile_commands.json` for clangd.

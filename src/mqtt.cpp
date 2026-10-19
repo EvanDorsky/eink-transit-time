@@ -24,10 +24,8 @@ static const char *TOPIC_COMMUTE_SET_START = "transit-display/commute/start/set"
 static const char *TOPIC_COMMUTE_SET_END = "transit-display/commute/end/set";
 static const char *TOPIC_COMMUTE_SET_JSON = "transit-display/commute/set";
 
-// Weather and notices pushed from HA (retained); see mqtt.h for the shapes
-static const char *TOPIC_WEATHER = "transit-display/weather";
+// Notices pushed from HA (retained); see mqtt.h for the shape
 static const char *TOPIC_NOTIFY = "transit-display/notify";
-static const char *TOPIC_HOURLY = "transit-display/hourly";
 
 // Pause (panel wear): HA publishes ON/OFF retained; see mqtt.h
 static const char *TOPIC_PAUSE_SET = "transit-display/pause/set";
@@ -48,10 +46,6 @@ static Preferences commutePrefs; // NVS namespace kept open for saves
 
 CommuteConfig mqttGetCommuteConfig() { return commuteCfg; }
 
-static WeatherInfo weather = {};
-
-WeatherInfo mqttGetWeather() { return weather; }
-
 static Notice notices[MAX_NOTICES];
 static int noticeCount = 0;
 
@@ -60,10 +54,6 @@ int mqttGetNotices(Notice *out, int max) {
   for (int i = 0; i < n; i++) out[i] = notices[i];
   return n;
 }
-
-static HourlyInfo hourly = {};
-
-HourlyInfo mqttGetHourly() { return hourly; }
 
 static bool paused = false; // not persisted: the retained set topic restores it on connect
 
@@ -115,29 +105,10 @@ static uint8_t clampHour(long v) {
 }
 
 static void mqttCallback(char *topic, byte *payload, unsigned int len) {
-  char buf[768]; // notify/hourly payloads carry several items
+  char buf[768]; // notify payloads carry several items
   if (len >= sizeof(buf)) len = sizeof(buf) - 1;
   memcpy(buf, payload, len);
   buf[len] = '\0';
-
-  if (strcmp(topic, TOPIC_WEATHER) == 0) {
-    JsonDocument doc;
-    if (deserializeJson(doc, buf)) {
-      LOGB("weather: bad json ignored");
-      return;
-    }
-    const char *c = doc["cond"] | "";
-    snprintf(weather.cond, sizeof(weather.cond), "%s", c);
-    weather.hi = doc["hi"] | 0;
-    weather.lo = doc["lo"] | 0;
-    weather.rainIn = doc["rain_in"] | -1;
-    const char *at = doc["rain_at"] | "";
-    snprintf(weather.rainAt, sizeof(weather.rainAt), "%s", at);
-    weather.valid = weather.cond[0] != 0;
-    LOGB("weather: %s %d-%d rain_in=%d at=%s", weather.cond, weather.lo,
-         weather.hi, weather.rainIn, weather.rainAt);
-    return;
-  }
 
   if (strcmp(topic, TOPIC_NOTIFY) == 0) {
     JsonDocument doc;
@@ -159,29 +130,6 @@ static void mqttCallback(char *topic, byte *payload, unsigned int len) {
     }
     noticeCount = n;
     LOGB("notify: %d item(s)", n);
-    return;
-  }
-
-  if (strcmp(topic, TOPIC_HOURLY) == 0) {
-    JsonDocument doc;
-    if (deserializeJson(doc, buf)) {
-      LOGB("hourly: bad json ignored");
-      return;
-    }
-    HourlyInfo h = {};
-    for (JsonObject it : doc["h"].as<JsonArray>()) {
-      if (h.count >= HOURLY_N) break;
-      HourlyHour &o = h.h[h.count];
-      snprintf(o.t, sizeof(o.t), "%s", it["t"] | "");
-      snprintf(o.cond, sizeof(o.cond), "%s", it["c"] | "");
-      o.temp = it["f"] | 0;
-      o.pop = it["p"] | 0;
-      if (!o.t[0]) continue;
-      h.count++;
-    }
-    h.valid = h.count > 0;
-    hourly = h;
-    LOGB("hourly: %d hour(s) from %s", h.count, h.count ? h.h[0].t : "-");
     return;
   }
 
@@ -370,9 +318,7 @@ static bool mqttConnect() {
   mqtt.subscribe(TOPIC_COMMUTE_SET_START);
   mqtt.subscribe(TOPIC_COMMUTE_SET_END);
   mqtt.subscribe(TOPIC_COMMUTE_SET_JSON);
-  mqtt.subscribe(TOPIC_WEATHER);
   mqtt.subscribe(TOPIC_NOTIFY);
-  mqtt.subscribe(TOPIC_HOURLY);
   mqtt.subscribe(TOPIC_PAUSE_SET);
   mqtt.subscribe(TOPIC_FLIGHT_SET);
   mqtt.subscribe(TOPIC_FLIGHT_UBER);

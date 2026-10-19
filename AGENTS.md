@@ -2,8 +2,10 @@
 
 A guide for setting up Home Assistant (HA) to work with this display, written
 for an agent (or a person) doing it by hand. The display works without HA and
-shows arrivals only. HA adds weather, rain alerts, notices, the hourly
-screen, standby, and control of its modes.
+shows arrivals and, if `TRANSIT_LAT`/`TRANSIT_LON` are set at build time,
+weather from Open-Meteo, which it fetches itself; HA doesn't supply weather.
+HA adds notices in the side column, standby, and control of the display's
+modes.
 
 ## How they talk
 
@@ -39,28 +41,19 @@ retained message there silently overrides the entities on the next reconnect.
 
 ## What HA feeds the display
 
-Four topics carry data that has no entity. Publish each one **retained** (so
-the display gets it as soon as it connects) from an automation with
-`mqtt.publish`. Formats are also documented in `include/mqtt.h`.
+Two topics carry data that has no entity: the side-column **notices**, and
+the Uber drive time for flight mode. Publish them **retained** (so the display
+gets them as soon as it connects) from an automation with `mqtt.publish`. The
+formats are also documented in `include/mqtt.h`.
 
 | Topic | Payload | Shown as |
 |---|---|---|
-| `transit-display/weather` | `{"cond":"sunny","hi":81,"lo":63,"rain_in":5,"rain_at":"6pm"}` | Side column: icon, today's hi-lo, and an umbrella + time when rain is coming |
 | `transit-display/notify` | `{"items":[{"title":"Printing","text":"1h20 left","pct":42}]}` | Side column notices (rotate if several) |
-| `transit-display/hourly` | `{"h":[{"t":"1pm","c":"rainy","f":75,"p":40}, ...]}` | HOME-key screen: next 8 hours |
-| `transit-display/flight/uber` | `23` | Flight mode: the Uber row's drive minutes (`-1` or nothing = hidden) |
+| `transit-display/flight/uber` | `23` | Flight mode only: the Uber row's drive minutes (`-1` or nothing = hidden) |
 
-Field notes:
-
-- `cond` and `c` are HA weather condition strings (`sunny`, `clear-night`,
-  `partlycloudy`, `cloudy`, `rainy`, `pouring`, `snowy`, `snowy-rainy`, `hail`,
-  `lightning`, `lightning-rainy`, `fog`, `windy`, `exceptional`), so pass the
-  weather entity's state straight through. Temperatures are whole °F.
-- `rain_in` is hours until the first wet hour (0 = raining now). Omit both rain
-  keys, or send `rain_in` < 0, for "no rain coming".
-- Notices: the column is 92 px wide at 11 pt, so keep `title` and `text` to
-  about 9 characters. `pct` (0–100) adds a progress bar. An empty list clears
-  the zone. Put every notice in **one** automation that rebuilds the whole list,
+- The column is 92 px wide at 11 pt, so keep `title` and `text` to about 9
+  characters. `pct` (0–100) adds a progress bar. An empty list clears the
+  zone. Put every notice in **one** automation that rebuilds the whole list,
   since each publish replaces it.
 - The panel is rated for about 1M refreshes and only redraws when what's shown
   changes. Don't publish values that change every few seconds (e.g. a notice
@@ -68,78 +61,7 @@ Field notes:
 
 ## Example automations
 
-Shapes only: swap in your own entity ids. `weather.home` is any HA weather
-entity. The hourly screen wants one whose hourly forecast includes
-`precipitation_probability` (NWS does; met.no doesn't).
-
-**Weather** (every 15 min, on change, and at startup):
-
-```yaml
-triggers:
-  - trigger: state
-    entity_id: weather.home
-  - trigger: time_pattern
-    minutes: /15
-  - trigger: homeassistant
-    event: start
-actions:
-  - action: weather.get_forecasts
-    target: {entity_id: weather.home}
-    data: {type: daily}
-    response_variable: fc
-  - action: weather.get_forecasts
-    target: {entity_id: weather.home}
-    data: {type: hourly}
-    response_variable: fh
-  - variables:
-      day: "{{ fc['weather.home'].forecast[0] }}"
-      wet_hours: >-
-        {{ fh['weather.home'].forecast[:13]
-           | selectattr('precipitation', 'defined')
-           | selectattr('precipitation', 'gt', 0) | list }}
-  - action: mqtt.publish
-    data:
-      topic: transit-display/weather
-      retain: true
-      payload: >-
-        {% set w = wet_hours[0] if wet_hours else none %}
-        {{ {'cond': states('weather.home'),
-            'hi': day.temperature | round | int,
-            'lo': day.templow | round | int,
-            'rain_in': ((as_datetime(w.datetime) - now()).total_seconds() / 3600)
-                       | round(0, 'ceil') | int if w else -1,
-            'rain_at': (as_datetime(w.datetime) | as_local).strftime('%-I%p') | lower
-                       if w else ''} | to_json }}
-mode: single
-```
-
-**Hourly screen** (every 20 min):
-
-```yaml
-triggers:
-  - trigger: time_pattern
-    minutes: /20
-  - trigger: homeassistant
-    event: start
-actions:
-  - action: weather.get_forecasts
-    target: {entity_id: weather.home}
-    data: {type: hourly}
-    response_variable: fh
-  - action: mqtt.publish
-    data:
-      topic: transit-display/hourly
-      retain: true
-      payload: >-
-        {% set ns = namespace(h=[]) %}
-        {% for e in fh['weather.home'].forecast[:8] %}
-          {% set ns.h = ns.h + [{'t': (as_datetime(e.datetime) | as_local).strftime('%-I%p') | lower,
-                                 'c': e.condition, 'f': e.temperature | round | int,
-                                 'p': e.precipitation_probability | default(0) | int}] %}
-        {% endfor %}
-        {{ {'h': ns.h} | to_json }}
-mode: restart
-```
+Shapes only: swap in your own entity ids.
 
 **Notices** (one automation for all of them; this one shows a low battery):
 
@@ -211,7 +133,7 @@ numbers. To pause it for a while, turn the switch off and schedule it back on
 - The device's entities are `unavailable` when the display is offline. They
   come back within a minute of it reconnecting.
 - `python3 scripts/udplog.py` (or `make udplog`) shows the display's log on the
-  LAN: `mqtt: connected`, `weather: ...`, `notify: N item(s)`, `pause: on`, and
+  LAN: `mqtt: connected`, `weather: ... (open-meteo)`, `notify: N item(s)`, `pause: on`, and
   a `draw: ...` line for every panel refresh.
 - To see what the broker is holding for the display, call `mqtt.dump` with
   topic `transit-display/#`. HA writes the result to `mqtt_dump.txt` in its

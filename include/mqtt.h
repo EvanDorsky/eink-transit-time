@@ -33,24 +33,12 @@ void mqttPublishState(const char *routeNorth, const char *routeSouth,
                       const char *busWestRow, const char *busEastRow);
 CommuteConfig mqttGetCommuteConfig();
 
-// Latest weather pushed from HA on transit-display/weather (retained JSON:
-// {"cond":"sunny","hi":81,"lo":63,"rain_in":5,"rain_at":"6pm"}; the rain
-// keys are optional and mean "no rain coming" when absent or rain_in < 0).
-// Invalid until the first message arrives.
-WeatherInfo mqttGetWeather();
-
 // Notices for the bottom of the side column, pushed retained from HA on
 // transit-display/notify as {"items":[{"title":"Printing","text":"1h20 left",
 // "pct":42}, ...]}. pct is optional. Up to MAX_NOTICES are kept; an empty
 // list (or empty payload) clears the zone. Returns the number stored.
 static const int MAX_NOTICES = 6;
 int mqttGetNotices(Notice *out, int max);
-
-// Hourly outlook for the HOME-key screen, pushed retained from HA on
-// transit-display/hourly as {"h":[{"t":"1pm","c":"rainy","f":75,"p":40},
-// ...]} (t = local hour label, c = HA condition, f = temp in F, p = precip
-// probability %). Invalid until the first message arrives.
-HourlyInfo mqttGetHourly();
 
 // Pause, to save panel refresh cycles (GDEY0579T93 is rated for 1M) when
 // nobody's looking: HA publishes "ON"/"OFF" retained on

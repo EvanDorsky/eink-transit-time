@@ -15,6 +15,7 @@
 #include "mqtt.h"
 #include "flight.h"
 #include "site.h"
+#include "weather.h"
 
 // Log to USB serial and a live UDP broadcast on port 5555 — listen with
 // `make udplog`. fmt string without trailing \n.
@@ -526,7 +527,7 @@ static void IRAM_ATTR onHomeKey() {
 }
 
 static void drawHourly() {
-  HourlyInfo h = mqttGetHourly();
+  HourlyInfo h = hourlyGet();
   static char lastKey[320] = "";
   char key[320];
   size_t pos = snprintf(key, sizeof(key), "%d|%d", (int)h.valid, h.count);
@@ -585,9 +586,9 @@ static void drawArrivals(const Arrivals &arrivals) {
     return;
   }
 
-  // Weather is pushed from HA; a change to it must force a repaint even when
-  // the arrival numbers are identical
-  WeatherInfo wx = mqttGetWeather();
+  // Weather (Open-Meteo, weather.cpp): a change to it must force a repaint
+  // even when the arrival numbers are identical
+  WeatherInfo wx = weatherGet();
   static char lastWx[64] = "";
   char wxKey[64];
   snprintf(wxKey, sizeof(wxKey), "%d|%s|%d|%d|%d|%s", (int)wx.valid, wx.cond,
@@ -949,6 +950,7 @@ void loop() {
     return;
   }
   lastFetch = millis();
+  weatherPoll(); // no-op except every 15 min
 
   Arrivals arrivals;
   memset(&arrivals, 0, sizeof(arrivals));

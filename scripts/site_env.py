@@ -6,7 +6,8 @@
 # Set them in your shell before building; site.env.example lists them.
 # REQUIRED stop ids have no default: a missing or malformed one stops the
 # build (a display flashed with blank stop ids would just show nothing).
-# OPTIONAL ones override the defaults in include/site.h.
+# The LOCATION is optional: without it the display shows no weather, and the
+# build says so. OPTIONAL ones override the defaults in include/site.h.
 Import("env")  # noqa: F821 (provided by PlatformIO/SCons)
 
 import os
@@ -36,7 +37,28 @@ OPTIONAL = {
     "TRANSIT_BUS_BADGE": (re.compile(r"^[A-Za-z0-9]{1,4}( [A-Za-z0-9]{1,4})?$"), "one or two route names, e.g. 'B25 B26'"),
 }
 
+# The display's location, for its weather (Open-Meteo). Two decimals (~1 km)
+# is plenty and keeps the exact address out of the request.
+COORD = re.compile(r"^-?[0-9]{1,3}(\.[0-9]{1,6})?$")
+LOCATION = {
+    "TRANSIT_LAT": ("latitude for the weather forecast, e.g. 40.71", -90, 90),
+    "TRANSIT_LON": ("longitude for the weather forecast, e.g. -74.01", -180, 180),
+}
+
 bad = []
+location = {name: os.environ.get(name, "") for name in LOCATION}
+if not any(location.values()):
+    print("\nsite_env.py: TRANSIT_LAT / TRANSIT_LON not set, so this build shows "
+          "no weather. Set both in site.env to get it (see site.env.example).\n")
+else:
+    for name, (what, lo, hi) in LOCATION.items():
+        value = location[name]
+        if not COORD.match(value) or not lo <= float(value) <= hi:
+            bad.append(f"  {name}  ({what}, set both or neither): "
+                       f"{'unset' if not value else repr(value)}")
+            continue
+        env.Append(CPPDEFINES=[(name, env.StringifyMacro(value))])  # noqa: F821
+
 for name, what in REQUIRED.items():
     value = os.environ.get(name, "")
     if not STOP_ID.match(value):

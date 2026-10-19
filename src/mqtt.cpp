@@ -285,10 +285,11 @@ static void publishDiscovery() {
   }
 
   // Commute mode controls: one switch + two hour numbers.
-  // The three switches here (commute, pause, flight) all have "ret": HA then
-  // publishes their commands RETAINED, so a toggle in HA survives this box
-  // rebooting or reconnecting. Without it the broker kept serving an older
-  // retained command on reconnect and silently undid the toggle.
+  // Every HA control defined here (the commute/pause/flight switches and the
+  // commute hour numbers) has "ret": HA then publishes its commands RETAINED,
+  // so a change made in HA survives this box rebooting or reconnecting, even
+  // one made while it was offline. Without it the broker kept serving an
+  // older retained command on reconnect and silently undid the change.
   char payload[640];
   snprintf(payload, sizeof(payload),
            "{\"uniq_id\":\"transit_display_commute_enabled\","
@@ -314,7 +315,7 @@ static void publishDiscovery() {
     snprintf(payload, sizeof(payload),
              "{\"uniq_id\":\"transit_display_%s\",\"name\":\"%s\","
              "\"stat_t\":\"%s\",\"val_tpl\":\"%s\",\"cmd_t\":\"%s\","
-             "\"min\":0,\"max\":23,\"step\":1,\"icon\":\"mdi:clock-outline\","
+             "\"ret\":true,\"min\":0,\"max\":23,\"step\":1,\"icon\":\"mdi:clock-outline\","
              "\"avty_t\":\"%s\",%s}",
              n.key, n.name, TOPIC_COMMUTE_STATE, n.tpl, n.cmd, TOPIC_AVAIL,
              DEV_BLOCK);

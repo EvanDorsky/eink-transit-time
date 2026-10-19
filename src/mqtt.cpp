@@ -284,14 +284,18 @@ static void publishDiscovery() {
     mqtt.publish(topic, payload, true);
   }
 
-  // Commute mode controls: one switch + two hour numbers
+  // Commute mode controls: one switch + two hour numbers.
+  // The three switches here (commute, pause, flight) all have "ret": HA then
+  // publishes their commands RETAINED, so a toggle in HA survives this box
+  // rebooting or reconnecting. Without it the broker kept serving an older
+  // retained command on reconnect and silently undid the toggle.
   char payload[640];
   snprintf(payload, sizeof(payload),
            "{\"uniq_id\":\"transit_display_commute_enabled\","
            "\"name\":\"Commute mode\",\"icon\":\"mdi:train\","
            "\"stat_t\":\"%s\","
            "\"val_tpl\":\"{{ 'ON' if value_json.enabled else 'OFF' }}\","
-           "\"cmd_t\":\"%s\",\"avty_t\":\"%s\",%s}",
+           "\"cmd_t\":\"%s\",\"ret\":true,\"avty_t\":\"%s\",%s}",
            TOPIC_COMMUTE_STATE, TOPIC_COMMUTE_SET_ENABLED, TOPIC_AVAIL,
            DEV_BLOCK);
   mqtt.publish("homeassistant/switch/transit_display/commute_enabled/config",
@@ -322,7 +326,7 @@ static void publishDiscovery() {
   snprintf(payload, sizeof(payload),
            "{\"uniq_id\":\"transit_display_paused\","
            "\"name\":\"Pause updates\",\"icon\":\"mdi:pause-circle-outline\","
-           "\"stat_t\":\"%s\",\"cmd_t\":\"%s\",\"avty_t\":\"%s\",%s}",
+           "\"stat_t\":\"%s\",\"cmd_t\":\"%s\",\"ret\":true,\"avty_t\":\"%s\",%s}",
            TOPIC_PAUSE_STATE, TOPIC_PAUSE_SET, TOPIC_AVAIL, DEV_BLOCK);
   mqtt.publish("homeassistant/switch/transit_display/paused/config", payload,
                true);
@@ -331,7 +335,7 @@ static void publishDiscovery() {
   snprintf(payload, sizeof(payload),
            "{\"uniq_id\":\"transit_display_flight\","
            "\"name\":\"Flight mode\",\"icon\":\"mdi:airplane\","
-           "\"stat_t\":\"%s\",\"cmd_t\":\"%s\",\"avty_t\":\"%s\",%s}",
+           "\"stat_t\":\"%s\",\"cmd_t\":\"%s\",\"ret\":true,\"avty_t\":\"%s\",%s}",
            TOPIC_FLIGHT_STATE, TOPIC_FLIGHT_SET, TOPIC_AVAIL, DEV_BLOCK);
   mqtt.publish("homeassistant/switch/transit_display/flight/config", payload,
                true);

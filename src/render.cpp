@@ -59,7 +59,10 @@ static void drawBusBadge(Adafruit_GFX &gfx, int16_t cx, int16_t cy) {
 // simple filled shapes read better at this size than dithered art, and it
 // keeps the flash cost at zero.
 
-static const int16_t WX_COL_W = 132; // right column reserved in renderArrivals
+// Right column reserved for the side column (weather / rain / notices): its
+// widest content (COL_W = 92, flush to the edge) plus a 24 px gap, so the
+// numbers' "min" never crowds a notice line sitting on the same row
+static const int16_t WX_COL_W = 92 + 24;
 
 static void wxSun(Adafruit_GFX &g, int16_t cx, int16_t cy, int16_t r) {
   g.fillCircle(cx, cy, r, K_BLACK);

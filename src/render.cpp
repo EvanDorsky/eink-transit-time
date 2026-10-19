@@ -193,7 +193,10 @@ static void drawWeather(Adafruit_GFX &gfx, const WeatherInfo *wx, int16_t cx,
 // left. The same column is drawn in both arrivals and commute mode.
 
 static const int16_t COL_W = 92;            // max content width
-static const int16_t COL_INSET = 46;        // axis sits this far from the edge
+// The axis sits in the middle of the reserved column, so the content has
+// equal space to the arrival numbers on its left and the panel edge on its
+// right (WX_COL_W = 116: axis 58 px in, widest content 12 px clear each side)
+static const int16_t COL_INSET = WX_COL_W / 2;
 static const int16_t RAIN_ZONE_TOP = 92;    // icon+label ~80px tall
 static const int16_t NOTE_ZONE_TOP = 190;   // title / bar / text / dots
 

@@ -27,20 +27,20 @@ Three gitignored inputs are needed before the first build:
 
 ## Flashing
 
-Every build, USB flash and OTA needs the stop variables in the environment (see [Customizing stops](#customizing-stops)), so start each shell with:
+Every build, USB flash and OTA needs the site variables in the environment (see [Customizing stops](#customizing-stops)), so start each shell with:
 
 ```sh
 set -a; . ./site.env; set +a
 ```
 
-First flash is over USB (set `upload_port`/`monitor_port` in `platformio.ini` to your serial device):
+First flash is over USB (the serial port is auto-detected):
 
 ```sh
 make flashusb                  # pio run -e crowpanel_epaper_579 -t upload
 make monitor                   # serial log
 ```
 
-After that, update over WiFi (device advertises `transit-display.local`, OTA password `transit-ota`):
+After that, update over WiFi (device advertises `transit-display.local`; the OTA password is set once, under `[ota]` in `platformio.ini`):
 
 ```sh
 make ota                       # pio run -e crowpanel_ota -t upload
@@ -49,26 +49,18 @@ make udplog                    # live logs over UDP :5555, no cable needed
 
 ## Customizing stops
 
-Stop ids come from env vars, never the repo. `cp site.env.example site.env` (gitignored), fill in every value, and source it before building. The build fails on any missing/invalid id.
+All site config comes from env vars, never the repo. `cp site.env.example site.env` (gitignored), fill it in, and source it before building.
 
-- Subway / LIRR: GTFS stop ids from MTA static GTFS `stops.txt`. `TRANSIT_SUBWAY_STOP` is the parent id; `N`/`S` are appended.
-- Bus: BusTime `MonitoringRef` stop codes (bustime.mta.info).
+- **Stop ids (required).** The build fails on any missing/invalid one.
+  - Subway / LIRR: GTFS stop ids from MTA static GTFS `stops.txt`. `TRANSIT_SUBWAY_STOP` is the parent id; `N`/`S` are appended.
+  - Bus: BusTime `MonitoringRef` stop codes (bustime.mta.info).
+- **Line and wording (optional).** The subway feed, primary/fallback route, row labels and bus badge default to this display's (C/A on the ACE feed; see `include/site.h`). Set the matching `TRANSIT_*` vars in `site.env` to change them; any subway route letter or number works.
 
-The rest of the site is hardcoded, so a different line or neighborhood means editing code, not just env vars:
-
-- `src/main.cpp`: `ROUTE_PRIMARY`/`ROUTE_FALLBACK` (C/A) and the `nyct%2Fgtfs-ace` feed URL.
-- `src/render.cpp`: the row labels (`Manhattan`, `Euclid`, `Downtown`, `Eastbound`) and the `B25`/`B26` bus badge.
-- Flight mode (`src/flight.cpp`) plans specific routes to JFK (C/A to the AirTrain, or the LIRR to Jamaica) with fixed walk and transfer times.
+Flight mode (`src/flight.cpp`) is the one site-specific part left in code: it plans specific routes to JFK (C/A to the AirTrain, or the LIRR to Jamaica) with fixed walk and transfer times.
 
 ## Home Assistant
 
-The device registers itself through MQTT discovery. HA gets the arrival sensors plus these controls, all of which stick across device reboots:
-
-- **Commute mode** switch and start/end hour numbers: inside the window (weekday mornings by default) the panel shows just the next three Manhattan-bound trains, large.
-- **Pause updates** switch: blank panel and no fetching, to save panel refreshes. The HOME key peeks at arrivals for 5 min.
-- **Flight mode** switch (also the EXIT button): ranked routes to JFK instead of arrivals.
-
-HA automations feed the rest as retained messages (formats in `include/mqtt.h`): `transit-display/weather`, `/notify` (side-column notices), `/hourly` (HOME-key screen) and `/flight/uber`.
+Optional. The display registers its sensors and controls (commute mode, standby, flight mode) through MQTT discovery; HA feeds it weather, notices and the hourly forecast. [AGENTS.md](AGENTS.md) is the setup guide.
 
 ## Dev
 

@@ -4,6 +4,7 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include "mqtt.h"
+#include "site.h"
 #include "log.h"
 #include "secrets.h"
 
@@ -244,19 +245,19 @@ struct SensorDef {
 };
 
 static const SensorDef SENSORS[] = {
-    {"train_north", "Train Manhattan-bound",
+    {"train_north", "Train " TRANSIT_LABEL_NORTH,
      "{{ value_json.north.split(',')[0] if value_json.north else '' }}", "min"},
-    {"train_south", "Train Euclid-bound",
+    {"train_south", "Train " TRANSIT_LABEL_SOUTH,
      "{{ value_json.south.split(',')[0] if value_json.south else '' }}", "min"},
-    {"bus_west", "Bus downtown-bound",
+    {"bus_west", "Bus " TRANSIT_LABEL_BUS_WEST,
      "{{ value_json.bus_west.split(',')[0] if value_json.bus_west else '' }}",
      "min"},
-    {"bus_east", "Bus eastbound",
+    {"bus_east", "Bus " TRANSIT_LABEL_BUS_EAST,
      "{{ value_json.bus_east.split(',')[0] if value_json.bus_east else '' }}",
      "min"},
-    {"route_north", "Route Manhattan-bound", "{{ value_json.route_n }}",
+    {"route_north", "Route " TRANSIT_LABEL_NORTH, "{{ value_json.route_n }}",
      nullptr},
-    {"route_south", "Route Euclid-bound", "{{ value_json.route_s }}", nullptr},
+    {"route_south", "Route " TRANSIT_LABEL_SOUTH, "{{ value_json.route_s }}", nullptr},
 };
 
 // Shared device block so all entities group under one HA device

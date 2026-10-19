@@ -14,6 +14,7 @@
 #include "log.h"
 #include "mqtt.h"
 #include "flight.h"
+#include "site.h"
 
 // Log to USB serial and a live UDP broadcast on port 5555 — listen with
 // `make udplog`. fmt string without trailing \n.
@@ -55,15 +56,15 @@ __attribute__((format(printf, 1, 2))) void logLine(const char *fmt, ...) {
 #define EPD_BUSY 48
 
 static const char *FEED_URL =
-    "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace";
+    "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/" TRANSIT_SUBWAY_FEED;
 // Stop ids are site config, injected at build time from environment
 // variables by scripts/site_env.py (see site.env.example), so the location
 // isn't in the repo.
 //
 // Late nights the C stops running and the A runs local past this stop, so
 // A trains only appear at the home stop when they're actually stopping here
-static const char *ROUTE_PRIMARY = "C";
-static const char *ROUTE_FALLBACK = "A";
+static const char *ROUTE_PRIMARY = TRANSIT_ROUTE_PRIMARY;   // include/site.h
+static const char *ROUTE_FALLBACK = TRANSIT_ROUTE_FALLBACK;
 static const char *STOP_NORTH = TRANSIT_SUBWAY_STOP "N"; // Manhattan-bound
 static const char *STOP_SOUTH = TRANSIT_SUBWAY_STOP "S"; // Euclid Av-bound
 
@@ -804,7 +805,7 @@ static bool wifiEnsure() {
 // ---------------- OTA (ArduinoOTA / espota) ----------------
 
 static const char *OTA_HOSTNAME = "transit-display";
-static const char *OTA_PASSWORD = "transit-ota"; // matches --auth in platformio.ini
+// OTA_PASSWORD comes from [ota] password in platformio.ini (build flag)
 
 // Pauses the fetch/draw loop while an update streams in
 static volatile bool otaInProgress = false;

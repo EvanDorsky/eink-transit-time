@@ -1,6 +1,7 @@
 #include "render.h"
 #include <stdio.h>
 #include <string.h>
+#include "site.h"
 #include "fonts/HelveticaBold11pt7b.h"
 #include "fonts/HelveticaBold14pt7b.h"
 #include "fonts/HelveticaBold20pt7b.h"
@@ -34,15 +35,22 @@ static void drawRouteBullet(Adafruit_GFX &gfx, const char *letter, int16_t cx,
 }
 
 // Bus route badge: filled rounded rect matching the route bullet's visual
-// weight, both route names stacked and knocked out in white
+// weight, with TRANSIT_BUS_BADGE's one or two route names (include/site.h)
+// knocked out in white, stacked when there are two
 static void drawBusBadge(Adafruit_GFX &gfx, int16_t cx, int16_t cy) {
   const int16_t w = 60, h = 52, r = 10;
   gfx.fillRoundRect(cx - w / 2, cy - h / 2, w, h, r, K_BLACK);
   gfx.setFont(&HelveticaBold11pt7b);
   gfx.setTextColor(K_WHITE);
-  const char *lines[2] = {"B25", "B26"};
-  const int16_t centers[2] = {(int16_t)(cy - 12), (int16_t)(cy + 12)};
-  for (int i = 0; i < 2; i++) {
+  char names[16];
+  snprintf(names, sizeof(names), "%s", TRANSIT_BUS_BADGE);
+  char *space = strchr(names, ' ');
+  if (space) *space = '\0';
+  const char *lines[2] = {names, space ? space + 1 : nullptr};
+  int n = space ? 2 : 1;
+  const int16_t two[2] = {(int16_t)(cy - 12), (int16_t)(cy + 12)};
+  const int16_t centers[2] = {n == 2 ? two[0] : cy, two[1]};
+  for (int i = 0; i < n; i++) {
     int16_t tbx, tby;
     uint16_t tbw, tbh;
     gfx.getTextBounds(lines[i], 0, 0, &tbx, &tby, &tbw, &tbh);
@@ -334,10 +342,10 @@ void renderArrivals(Adafruit_GFX &gfx, const char *routeNorth,
   // Arrival rows stop short of the reserved weather column when weather is
   // available, and reclaim the full width when it isn't
   int16_t margin = (wx && wx->valid) ? WX_COL_W : 16;
-  printArrivalRow(gfx, "Manhattan", northRow, ROW_BASELINES[0], margin);
-  printArrivalRow(gfx, "Euclid", southRow, ROW_BASELINES[1], margin);
-  printArrivalRow(gfx, "Downtown", busWestRow, ROW_BASELINES[2], margin);
-  printArrivalRow(gfx, "Eastbound", busEastRow, ROW_BASELINES[3], margin);
+  printArrivalRow(gfx, TRANSIT_LABEL_NORTH, northRow, ROW_BASELINES[0], margin);
+  printArrivalRow(gfx, TRANSIT_LABEL_SOUTH, southRow, ROW_BASELINES[1], margin);
+  printArrivalRow(gfx, TRANSIT_LABEL_BUS_WEST, busWestRow, ROW_BASELINES[2], margin);
+  printArrivalRow(gfx, TRANSIT_LABEL_BUS_EAST, busEastRow, ROW_BASELINES[3], margin);
 
   drawSideColumn(gfx, wx, note);
 }

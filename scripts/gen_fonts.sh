@@ -18,19 +18,14 @@ for size in 11 14 20 22 26 32; do
   echo "generated $OUT_DIR/HelveticaBold${size}pt7b.h"
 done
 
-# Commute-mode display font: chars 32-67 only (space..C — digits, comma,
-# dash, route letters). 64pt is the ceiling — GFXglyph yOffset is int8_t,
-# so glyphs taller than ~128px overflow; renderCommute scales 2x instead.
-FONTCONVERT_FACE=1 FONTCONVERT_NAME=HelveticaBold \
-  "$BIN" Helvetica.ttc 64 32 67 > "$OUT_DIR/HelveticaBold64pt7b.h"
-echo "generated $OUT_DIR/HelveticaBold64pt7b.h"
-
-# Commute bullet letter: route letters only (A-C) at 85pt, the largest
-# glyph that still fits a GFXfont's int8_t offsets
 # commute-mode minute list ("22,28,34") beside the side column: comma+digits
 FONTCONVERT_FACE=1 FONTCONVERT_NAME=HelveticaBold \
   "$BIN" Helvetica.ttc 54 44 57 > "$OUT_DIR/HelveticaBold54pt7b.h"
 echo "generated $OUT_DIR/HelveticaBold54pt7b.h"
+# Commute bullet: the route's letter or number at 85pt, the largest glyph
+# that still fits a GFXfont's int8_t offsets. Chars 48-90 = 0-9 and A-Z, so
+# any subway route (TRANSIT_ROUTE_*) can be shown; the few punctuation marks
+# in between cost almost nothing
 FONTCONVERT_FACE=1 FONTCONVERT_NAME=HelveticaBold \
-  "$BIN" Helvetica.ttc 85 65 67 > "$OUT_DIR/HelveticaBold85pt7b.h"
+  "$BIN" Helvetica.ttc 85 48 90 > "$OUT_DIR/HelveticaBold85pt7b.h"
 echo "generated $OUT_DIR/HelveticaBold85pt7b.h"
